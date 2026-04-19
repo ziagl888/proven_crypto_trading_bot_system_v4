@@ -1,0 +1,30 @@
+# V4 Crypto Trading Bot System — Python dependencies
+
+# --- Core & Database ---
+requests
+pandas
+numpy
+psycopg2-binary
+websockets
+websocket-client
+pytz
+python-dateutil
+aiohttp
+python-dotenv
+
+# --- Math & Indicators ---
+scikit-learn
+scipy
+xgboost
+yfinance
+pandas_ta
+joblib
+
+# --- Charting & Telegram ---
+mplfinance
+matplotlib
+python-telegram-bot
+
+# --- Dashboard ---
+flask
+psutil
