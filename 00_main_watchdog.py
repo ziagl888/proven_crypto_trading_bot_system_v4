@@ -44,9 +44,8 @@ logger = logging.getLogger(__name__)
 #                      (None = only restart on crash)
 
 PROCESSES: list[dict] = [
-    # Processes will be added here incrementally — one PR at a time.
-    # Example (uncomment when ready):
-    # {"name": "Data Ingestion", "script": "10_data_ingestion.py", "start_delay": 0, "restart_interval": None},
+    # ── Core data services ────────────────────────────────────────────
+    {"name": "Data Ingestion", "script": "10_data_ingestion.py", "start_delay": 0, "restart_interval": None},
 ]
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
@@ -194,3 +193,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
