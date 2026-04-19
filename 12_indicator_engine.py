@@ -81,11 +81,12 @@ def check_schema() -> None:
 # ── Indicator math ────────────────────────────────────────────────────────────
 
 def _rsi(series: pd.Series, period: int) -> pd.Series:
+    """Wilder's RSI — uses com=period-1 (alpha=1/period), not span."""
     delta = series.diff()
     up    = delta.clip(lower=0)
     down  = -delta.clip(upper=0)
-    rs    = up.ewm(span=period, adjust=False).mean() / \
-            down.ewm(span=period, adjust=False).mean()
+    # Wilder's smoothing: alpha = 1/period → com = period - 1
+    rs    = up.ewm(com=period - 1, adjust=False).mean() /             down.ewm(com=period - 1, adjust=False).mean()
     return (100.0 - 100.0 / (1.0 + rs)).fillna(50)
 
 
@@ -102,19 +103,36 @@ def _smma(series: pd.Series, period: int) -> pd.Series:
 
 
 def _kama(series: pd.Series, period: int = 10, fast: int = 2, slow: int = 30) -> pd.Series:
+    """
+    Kaufman Adaptive Moving Average.
+    Volatility is pre-computed as rolling sum of abs(diff) — avoids
+    repeated np.diff slicing inside the loop (O(n) → O(1) per candle).
+    """
     closes   = series.values.astype(float)
-    kama_arr = np.full_like(closes, np.nan)
-    if len(closes) <= period:
+    n        = len(closes)
+    kama_arr = np.full(n, np.nan)
+    if n <= period:
         return pd.Series(kama_arr, index=series.index)
-    kama_arr[period - 1] = float(np.mean(closes[:period]))
+
+    # Pre-compute absolute changes and rolling volatility sum
+    abs_diff = np.abs(np.diff(closes, prepend=closes[0]))   # len = n
+    # Rolling sum of abs_diff over last `period` bars (volatility)
+    vol_cumsum = np.cumsum(abs_diff)
+    # vol[i] = sum of abs_diff[i-period+1 .. i]
+    vol = vol_cumsum.copy()
+    vol[period:] = vol_cumsum[period:] - vol_cumsum[:-period]
+
     fast_sc = 2.0 / (fast + 1)
     slow_sc = 2.0 / (slow + 1)
-    for i in range(period, len(closes)):
-        change    = abs(closes[i] - closes[i - period])
-        volatility = np.sum(np.abs(np.diff(closes[i - period: i + 1])))
-        er  = change / volatility if volatility != 0 else 0
-        sc  = (er * (fast_sc - slow_sc) + slow_sc) ** 2
+    kama_arr[period - 1] = float(np.mean(closes[:period]))
+
+    for i in range(period, n):
+        change = abs(closes[i] - closes[i - period])
+        v      = vol[i]
+        er     = change / v if v != 0 else 0.0
+        sc     = (er * (fast_sc - slow_sc) + slow_sc) ** 2
         kama_arr[i] = kama_arr[i - 1] + sc * (closes[i] - kama_arr[i - 1])
+
     return pd.Series(kama_arr, index=series.index)
 
 
@@ -440,26 +458,46 @@ def _write_indicators_batch(tf: str, results: list[pd.DataFrame]) -> int:
     return len(rows)
 
 
-# ── Per-symbol calculation worker ─────────────────────────────────────────────
+# ── Per-symbol calculation workers ───────────────────────────────────────────
 
 def _calc_symbol(args: tuple[str, pd.DataFrame, str]) -> pd.DataFrame | None:
-    """
-    Worker function for ProcessPoolExecutor.
-    Receives pre-loaded OHLCV data for one symbol, returns indicator DataFrame.
-    """
+    """Single-symbol worker — kept for compatibility."""
     import warnings
     warnings.filterwarnings("ignore")
-
     symbol, df_sym, tf = args
     try:
         if len(df_sym) < 50:
             return None
-        ind_df = calculate_indicators(df_sym, tf)
-        # Only return the latest row — that's all we need to write/cache
-        return ind_df.tail(1)
+        return calculate_indicators(df_sym, tf).tail(1)
     except Exception as e:
         logger.warning(f"Indicator calc failed {symbol}/{tf}: {e}")
         return None
+
+
+def _calc_symbol_batch(
+    args_list: list[tuple[str, pd.DataFrame, str]]
+) -> list[pd.DataFrame]:
+    """
+    Batch worker for ProcessPoolExecutor.
+    Processes multiple symbols in one worker process — reduces pickle/IPC
+    overhead compared to one future per symbol.
+    Returns list of single-row DataFrames (latest indicator row per symbol).
+    """
+    import warnings
+    warnings.filterwarnings("ignore")
+
+    results = []
+    for symbol, df_sym, tf in args_list:
+        try:
+            if len(df_sym) < 50:
+                continue
+            row = calculate_indicators(df_sym, tf).tail(1)
+            if not row.empty:
+                results.append(row)
+        except Exception as e:
+            # Log but continue — one bad symbol shouldn't abort the batch
+            logger.warning(f"Indicator calc failed {symbol}/{tf}: {e}")
+    return results
 
 
 # ── Main calculation cycle ────────────────────────────────────────────────────
@@ -486,20 +524,26 @@ def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
         logger.warning(f"[{tf}] No OHLCV data found.")
         return
 
-    # Step 2: Split by symbol and calculate in parallel
+    # Step 2: Split by symbol using groupby (one pass, not 500 boolean masks)
+    sym_groups = {sym: grp.copy() for sym, grp in df_all.groupby("symbol", sort=False)}
     args_list = [
-        (sym, df_all[df_all["symbol"] == sym].copy(), tf)
+        (sym, sym_groups[sym], tf)
         for sym in symbols
-        if sym in df_all["symbol"].values
+        if sym in sym_groups
     ]
+
+    # Chunk args into NUM_WORKERS batches to reduce pickle/IPC overhead.
+    # Fewer, larger tasks are faster than 500 tiny tasks in a ProcessPool.
+    chunk_size = max(1, len(args_list) // (NUM_WORKERS * 4))
+    chunks = [args_list[i:i + chunk_size] for i in range(0, len(args_list), chunk_size)]
 
     results: list[pd.DataFrame] = []
     with ProcessPoolExecutor(max_workers=NUM_WORKERS) as pool:
-        futures = {pool.submit(_calc_symbol, args): args[0] for args in args_list}
+        futures = {pool.submit(_calc_symbol_batch, chunk): i for i, chunk in enumerate(chunks)}
         for future in as_completed(futures):
-            result = future.result()
-            if result is not None:
-                results.append(result)
+            batch_results = future.result()
+            if batch_results:
+                results.extend(batch_results)
 
     if not results:
         logger.warning(f"[{tf}] No indicator results produced.")
@@ -623,15 +667,16 @@ def poll_and_process() -> None:
                     continue  # Already processed this close
 
                 logger.info(f"New candle close detected: {tf} at {closed_at}")
-                _LAST_PROCESSED[tf] = closed_at
 
                 # Refresh coin list periodically (housekeeping updates it)
                 fresh_symbols = load_coins() or symbols
 
-                # Run calculation in a thread so we can process multiple TFs
+                # Run calculation in a thread so we can process multiple TFs.
+                # _LAST_PROCESSED is set inside the thread AFTER success —
+                # if the cycle fails, the next poll will retry.
                 t = threading.Thread(
                     target=_run_cycle_and_bots,
-                    args=(tf, fresh_symbols),
+                    args=(tf, fresh_symbols, closed_at),
                     daemon=True,
                     name=f"ind-{tf}",
                 )
@@ -643,13 +688,19 @@ def poll_and_process() -> None:
         time.sleep(10)
 
 
-def _run_cycle_and_bots(tf: str, symbols: list[str]) -> None:
-    """Runs indicator cycle then bot runner for a timeframe."""
+def _run_cycle_and_bots(tf: str, symbols: list[str], closed_at: datetime.datetime) -> None:
+    """
+    Runs indicator cycle then bot runner for a timeframe.
+    Only marks _LAST_PROCESSED after a successful cycle — if the cycle
+    fails, the next poll will detect the same closed_at and retry.
+    """
     try:
         run_indicator_cycle(tf, symbols)
+        _LAST_PROCESSED[tf] = closed_at   # mark as done only on success
         run_bots_for_timeframe(tf)
     except Exception as e:
         logger.error(f"[{tf}] Cycle+bots error: {e}")
+        # Do NOT update _LAST_PROCESSED — will retry on next poll
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -665,5 +716,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
