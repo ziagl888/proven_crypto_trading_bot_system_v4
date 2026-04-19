@@ -90,6 +90,10 @@ REST_BATCH_SIZE = 1500            # max candles per Binance klines request
 # kline_tuple: (symbol, open_time, open, high, low, close, volume)
 _BUFFER: dict[str, dict[str, tuple]] = defaultdict(dict)
 
+# Tracks which timeframes closed for each symbol between 5m flushes
+# {symbol: {timeframe, ...}}
+_CLOSED_TFS: dict[str, set[str]] = defaultdict(set)
+
 
 # ── Startup check ─────────────────────────────────────────────────────────────
 
@@ -423,10 +427,38 @@ def _apply_tcp_keepalive(ws) -> None:
         pass
 
 
-def _flush_symbol_to_db(symbol: str, symbol_data: dict[str, tuple]) -> None:
+def _write_candle_close_event(conn, timeframe: str, symbol_count: int) -> None:
+    """
+    Upserts a candle close event so the indicator engine knows
+    a new candle has closed for this timeframe.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO candle_close_events (timeframe, closed_at, symbol_count)
+                VALUES (%s, NOW(), %s)
+                ON CONFLICT (timeframe) DO UPDATE SET
+                    closed_at    = EXCLUDED.closed_at,
+                    symbol_count = EXCLUDED.symbol_count
+                """,
+                (timeframe, symbol_count),
+            )
+    except Exception as e:
+        logger.warning(f"Could not write candle_close_event for {timeframe}: {e}")
+
+
+# Tracks how many symbols closed per timeframe in the current batch
+# {timeframe: count}  — reset after each flush
+_CLOSE_COUNTS: dict[str, int] = {}
+_CLOSE_COUNTS_LOCK = None   # set in main_async()
+
+
+def _flush_symbol_to_db(symbol: str, symbol_data: dict[str, tuple], closed_tfs: set[str]) -> None:
     """
     Writes all buffered timeframes for one symbol to DB.
     Called on every 5m candle close for that symbol.
+    closed_tfs: set of timeframes whose candle just closed for this symbol.
     """
     rows_by_tf: dict[str, list[tuple]] = {}
     for tf, kline in symbol_data.items():
@@ -435,11 +467,15 @@ def _flush_symbol_to_db(symbol: str, symbol_data: dict[str, tuple]) -> None:
     conn = get_db_connection()
     try:
         written = _upsert_candles(conn, rows_by_tf)
+
+        # Record close events for all closed timeframes
+        for tf in closed_tfs:
+            _CLOSE_COUNTS[tf] = _CLOSE_COUNTS.get(tf, 0) + 1
+            _write_candle_close_event(conn, tf, _CLOSE_COUNTS[tf])
+
+        conn.commit()
         if written:
-            logger.debug(
-                f"Flushed {symbol}: {written} rows "
-                f"({list(rows_by_tf.keys())})"
-            )
+            logger.debug(f"Flushed {symbol}: {written} rows ({list(rows_by_tf.keys())})")
     except Exception as e:
         logger.error(f"DB flush error for {symbol}: {e}")
         conn.rollback()
@@ -546,11 +582,18 @@ async def ws_worker(
                         # Always update RAM buffer
                         _BUFFER[sym][tf] = kline
 
+                        # Track which TFs closed for this symbol
+                        if is_closed:
+                            _CLOSED_TFS[sym].add(tf)
+
                         # On 5m close: flush ALL buffered TFs for this symbol
                         if tf == "5m" and is_closed:
                             symbol_snapshot = dict(_BUFFER[sym])
+                            closed_tfs = _CLOSED_TFS.pop(sym, set())
+                            closed_tfs.add("5m")
                             asyncio.get_event_loop().run_in_executor(
-                                None, _flush_symbol_to_db, sym, symbol_snapshot
+                                None, _flush_symbol_to_db, sym,
+                                symbol_snapshot, closed_tfs
                             )
 
                 finally:
@@ -650,3 +693,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

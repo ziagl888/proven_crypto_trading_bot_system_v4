@@ -127,6 +127,19 @@ INDICATOR_COLUMNS: list[tuple[str, str]] = [
     ("fib_extension_1_272", "REAL"),
     ("fib_extension_1_618", "REAL"),
     ("fib_extension_2_618", "REAL"),
+
+    # ── Derived features ─────────────────────────────────────────────
+    # Pre-computed by indicator engine so bots need zero extra math.
+    # Used by: 14_ai_atb_bot, 12_ai_ats_bot, 13_ai_rub_bot, 11_ai_mis_bot
+    ("atr_pct",               "REAL"),  # atr_14 / close * 100
+    ("bb_position_relative",  "REAL"),  # (close-boll_lower_20) / (boll_upper_20-boll_lower_20)
+    ("dc_position_relative",  "REAL"),  # (close-donchian_lower_20) / (donchian_upper_20-donchian_lower_20)
+    ("dist_close_ema9_pct",   "REAL"),  # (close - ema_9) / ema_9
+    ("dist_ema9_ema21_pct",   "REAL"),  # (ema_9 - ema_21) / ema_21
+    ("dist_close_kama9_pct",  "REAL"),  # (close - kama_9) / kama_9
+    ("dist_close_ema200_pct", "REAL"),  # (close - ema_200) / ema_200
+    ("macd_hist_fast",        "REAL"),  # macd_dif_fast_9_21_9 - macd_dea_fast_9_21_9
+    ("macd_hist_normal",      "REAL"),  # macd_dif_normal_12_26_9 - macd_dea_normal_12_26_9
 ]
 
 
@@ -199,6 +212,16 @@ def _infrastructure_tables_ddl() -> str:
             direction       TEXT        NOT NULL,
             last_posted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (module, coin, direction)
+        );
+
+        -- Candle close events: written by ingestion, polled by indicator engine.
+        -- Lightweight IPC mechanism — avoids any file-based or socket-based signalling.
+        -- Ingestion upserts a row on every candle close.
+        -- Indicator engine polls this table every 10s to detect new closes.
+        CREATE TABLE IF NOT EXISTS candle_close_events (
+            timeframe   TEXT        NOT NULL PRIMARY KEY,
+            closed_at   TIMESTAMPTZ NOT NULL,
+            symbol_count INTEGER    NOT NULL DEFAULT 0
         );
     """
 
@@ -333,7 +356,7 @@ def verify_schema() -> dict:
     expected = (
         [f"ohlcv_{tf}"       for tf in OHLCV_TIMEFRAMES]
         + [f"indicators_{tf}" for tf in INDICATOR_TIMEFRAMES]
-        + ["telegram_outbox", "trade_cooldowns"]
+        + ["telegram_outbox", "trade_cooldowns", "candle_close_events"]
     )
     missing, ok = [], []
     with db_connection() as conn:
@@ -342,3 +365,4 @@ def verify_schema() -> dict:
                 cur.execute("SELECT to_regclass(%s)", (tname,))
                 (missing if cur.fetchone()[0] is None else ok).append(tname)
     return {"ok": ok, "missing": missing}
+
