@@ -65,10 +65,6 @@ INDICATOR_CACHE: dict[str, dict[str, dict[str, Any]]] = {
 # Tracks last processed closed_at per timeframe to avoid double-processing
 _LAST_PROCESSED: dict[str, datetime.datetime] = {}
 
-# Candles to load per symbol for indicator warmup
-# 500 candles covers EMA_200 warmup on all timeframes
-LOOKBACK_CANDLES = 500
-
 # Cache-priority timeframes (loaded into INDICATOR_CACHE)
 CACHE_TIMEFRAMES = {"1h", "30m"}
 
@@ -358,47 +354,37 @@ def calculate_indicators(df: pd.DataFrame, tf: str) -> pd.DataFrame:
 
 # ── DB batch operations ───────────────────────────────────────────────────────
 
+# Lookback window per timeframe — covers LOOKBACK_CANDLES (500) with margin.
+# EMA_200 needs ~1000 candles to stabilize; 500 is sufficient for all others.
+# These day values give 500+ candles for each TF.
+_TF_LOOKBACK_DAYS: dict[str, int] = {
+    "30m": 11,    # 500 candles × 30min = 10.4 days
+    "1h":  22,    # 500 candles × 1h   = 20.8 days
+    "2h":  44,    # 500 candles × 2h   = 41.7 days
+    "4h":  85,    # 500 candles × 4h   = 83.3 days
+    "1d":  520,   # 500 candles × 1d   = 500 days
+    "1w":  3640,  # 500 candles × 1w   = 3500 days
+}
+
+
 def _load_ohlcv_batch(tf: str, symbols: list[str]) -> pd.DataFrame:
     """
-    Loads the last LOOKBACK_CANDLES candles for ALL symbols of a timeframe
+    Loads the last N days of candles for ALL symbols of a timeframe
     in a single query. Returns a DataFrame with a 'symbol' column.
+    N is chosen to cover LOOKBACK_CANDLES for each timeframe.
+    """
+    days         = _TF_LOOKBACK_DAYS.get(tf, 30)
+    placeholders = ",".join(["%s"] * len(symbols))
+
+    sql = f"""
+        SELECT symbol, open_time, open, high, low, close, volume
+        FROM ohlcv_{tf}
+        WHERE symbol IN ({placeholders})
+          AND open_time >= NOW() - INTERVAL '{days} days'
+        ORDER BY symbol, open_time ASC
     """
     with db_connection() as conn:
-        placeholders = ",".join(["%s"] * len(symbols))
-        sql = f"""
-            SELECT symbol, open_time, open, high, low, close, volume
-            FROM ohlcv_{tf}
-            WHERE symbol IN ({placeholders})
-              AND open_time >= NOW() - (
-                  SELECT {LOOKBACK_CANDLES} * interval_seconds * interval '1 second'
-                  FROM (
-                      SELECT EXTRACT(EPOCH FROM MAX(open_time) - MIN(open_time))
-                           / NULLIF(COUNT(*) - 1, 0) AS interval_seconds
-                      FROM ohlcv_{tf}
-                      WHERE symbol = %s
-                        AND open_time >= NOW() - INTERVAL '7 days'
-                  ) sub
-              )
-            ORDER BY symbol, open_time ASC
-        """
-        # Fallback: simpler query using a fixed interval estimate
-        try:
-            df = pd.read_sql(sql, conn, params=symbols + [symbols[0]])
-        except Exception:
-            # Fallback with hardcoded lookback window per timeframe
-            tf_days = {
-                "30m": 11, "1h": 22, "2h": 44, "4h": 88,
-                "1d": 520, "1w": 3640
-            }
-            days = tf_days.get(tf, 30)
-            sql2 = f"""
-                SELECT symbol, open_time, open, high, low, close, volume
-                FROM ohlcv_{tf}
-                WHERE symbol IN ({placeholders})
-                  AND open_time >= NOW() - INTERVAL '{days} days'
-                ORDER BY symbol, open_time ASC
-            """
-            df = pd.read_sql(sql2, conn, params=symbols)
+        df = pd.read_sql(sql, conn, params=symbols)
 
     df["open_time"] = pd.to_datetime(df["open_time"], utc=True)
     return df
@@ -672,3 +658,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
