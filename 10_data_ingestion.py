@@ -427,6 +427,26 @@ def _apply_tcp_keepalive(ws) -> None:
         pass
 
 
+# Semaphore: limit concurrent DB flushes to avoid connection pool exhaustion.
+# With 500 coins all closing at minute :00, we'd otherwise have 500 simultaneous
+# DB connections. 20 concurrent flushes is plenty given pool max=20.
+_FLUSH_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+async def _flush_symbol_async(
+    symbol: str, symbol_data: dict[str, tuple], closed_tfs: set[str]
+) -> None:
+    """Async wrapper for _flush_symbol_to_db with concurrency control."""
+    global _FLUSH_SEMAPHORE
+    if _FLUSH_SEMAPHORE is None:
+        _FLUSH_SEMAPHORE = asyncio.Semaphore(20)
+    async with _FLUSH_SEMAPHORE:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None, _flush_symbol_to_db, symbol, symbol_data, closed_tfs
+        )
+
+
 def _write_candle_close_event(conn, timeframe: str, symbol_count: int) -> None:
     """
     Upserts a candle close event so the indicator engine knows
@@ -586,14 +606,16 @@ async def ws_worker(
                         if is_closed:
                             _CLOSED_TFS[sym].add(tf)
 
-                        # On 5m close: flush ALL buffered TFs for this symbol
+                        # On 5m close: flush ALL buffered TFs for this symbol.
+                        # We use create_task so the flush runs concurrently
+                        # but is properly tracked by the event loop.
                         if tf == "5m" and is_closed:
                             symbol_snapshot = dict(_BUFFER[sym])
                             closed_tfs = _CLOSED_TFS.pop(sym, set())
                             closed_tfs.add("5m")
-                            asyncio.get_event_loop().run_in_executor(
-                                None, _flush_symbol_to_db, sym,
-                                symbol_snapshot, closed_tfs
+                            # Schedule DB flush as a proper async task
+                            asyncio.create_task(
+                                _flush_symbol_async(sym, symbol_snapshot, closed_tfs)
                             )
 
                 finally:
@@ -627,6 +649,43 @@ async def ws_worker(
             backoff = min(backoff * 2.0, WS_RECONNECT_MAX_SEC)
 
 
+async def _fallback_flush_loop() -> None:
+    """
+    Fallback: every 6 minutes, flush any symbols that have buffered data
+    but haven't been flushed via the 5m trigger.
+    This catches edge cases where Binance doesn't send a 5m close event
+    (e.g. illiquid coins, stream reconnects mid-candle).
+    """
+    while True:
+        await asyncio.sleep(360)   # every 6 minutes
+        if not _BUFFER:
+            continue
+
+        flushed = 0
+        for sym, sym_data in list(_BUFFER.items()):
+            if not sym_data:
+                continue
+            # Only flush if we have a 5m entry that looks stale
+            kline_5m = sym_data.get("5m")
+            if kline_5m is None:
+                continue
+            # Check if open_time of buffered 5m candle is more than 6 min old
+            open_time = kline_5m[1]  # index 1 = open_time datetime
+            age_secs = (
+                datetime.datetime.now(datetime.timezone.utc) - open_time
+            ).total_seconds()
+            if age_secs > 360:
+                snapshot   = dict(sym_data)
+                closed_tfs = _CLOSED_TFS.pop(sym, set())
+                asyncio.create_task(
+                    _flush_symbol_async(sym, snapshot, closed_tfs)
+                )
+                flushed += 1
+
+        if flushed > 0:
+            logger.info(f"Fallback flush: flushed {flushed} stale symbols.")
+
+
 async def start_ws_fleet(symbols: list[str]) -> None:
     """
     Splits all streams across workers and starts them with staggered delays.
@@ -651,6 +710,8 @@ async def start_ws_fleet(symbols: list[str]) -> None:
         ws_worker(i + 1, chunk, startup_delay=i * WS_STARTUP_STAGGER_SEC)
         for i, chunk in enumerate(chunks)
     ]
+    # Add fallback flush as background task
+    tasks.append(_fallback_flush_loop())
     await asyncio.gather(*tasks)
 
 
@@ -693,4 +754,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
