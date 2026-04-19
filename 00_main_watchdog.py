@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 # 00_main_watchdog.py
-# System orchestrator for the V4 Crypto Trading Bot.
+# System entry point for the V4 Crypto Trading Bot.
 #
-# Startup sequence:
-#   1. Load .env
-#   2. Run bootstrap (fetch coins, max leverage, init DB schema)
-#   3. Start all configured processes in staggered order
-#   4. Monitor processes, restart on crash with exponential backoff
+# Current state: Bootstrap only.
+# Processes will be added incrementally as each module is implemented.
 #
 # File naming convention:
 #   00          – watchdog / entry point
@@ -14,13 +11,12 @@
 #   20–29       – infrastructure (telegram bot, trade monitor, housekeeping)
 #   30–69       – trading bots and strategies
 #   70–89       – dashboards, utilities, chart services
-#   90–99       – backtest / training (not started by watchdog)
+#   90–99       – backtest / training (never started by watchdog)
 
 import os
 import sys
 import time
 import logging
-import datetime
 import subprocess
 
 from dotenv import load_dotenv
@@ -39,65 +35,35 @@ logger = logging.getLogger(__name__)
 
 
 # ── Process registry ──────────────────────────────────────────────────────────
+# Processes are added here as each module is implemented and tested.
 # Each entry:
 #   name             – display name for logs
 #   script           – filename to launch with sys.executable
 #   start_delay      – seconds after t=0 to start (staggered startup)
 #   restart_interval – seconds between scheduled RAM-recycle restarts
-#                      (None = never scheduled, only restart on crash)
-#
-# NOTE: Scripts 90–99 are NOT listed here (backtests run manually).
+#                      (None = only restart on crash)
 
 PROCESSES: list[dict] = [
-    # ── Core services ─────────────────────────────────────────────────
-    {"name": "Data Ingestion",     "script": "10_data_ingestion.py",      "start_delay":   0, "restart_interval": None},
-    {"name": "Chart Data Service", "script": "11_chart_data_service.py",  "start_delay":   3, "restart_interval": None},
-    {"name": "Indicator Engine",   "script": "12_indicator_engine.py",    "start_delay":   5, "restart_interval": 21600},
-    {"name": "Detectors",          "script": "13_detectors.py",           "start_delay":   5, "restart_interval": 21600},
-
-    # ── Infrastructure ────────────────────────────────────────────────
-    {"name": "Telegram Bot",       "script": "20_telegram_bot.py",        "start_delay":   5, "restart_interval": None},
-    {"name": "Trade Monitor",      "script": "21_trade_monitor.py",       "start_delay":   5, "restart_interval": None},
-    {"name": "AI Trade Monitor",   "script": "22_ai_trade_monitor.py",    "start_delay":  10, "restart_interval": None},
-    {"name": "Housekeeping",       "script": "23_housekeeping.py",        "start_delay":  10, "restart_interval": None},
-
-    # ── Trading bots ──────────────────────────────────────────────────
-    {"name": "Pattern Detector",   "script": "30_pattern_detector.py",    "start_delay":  20, "restart_interval": None},
-    {"name": "AI SR Bot",          "script": "31_ai_sr_bot.py",           "start_delay":  28, "restart_interval": None},
-    {"name": "Pump Dump Detector", "script": "32_pump_dump_detector.py",  "start_delay":  36, "restart_interval": None},
-    {"name": "AI MIS1 Detector",   "script": "33_ai_mis_bot.py",          "start_delay":  44, "restart_interval": None},
-    {"name": "AI ATS1 Detector",   "script": "34_ai_ats_bot.py",          "start_delay":  52, "restart_interval": None},
-    {"name": "AI RUB1 Detector",   "script": "35_ai_rub_bot.py",          "start_delay":  60, "restart_interval": None},
-    {"name": "AI ATB1 Detector",   "script": "36_ai_atb_bot.py",          "start_delay":  68, "restart_interval": None},
-    {"name": "AI Master Bot",      "script": "37_ai_master_bot.py",       "start_delay":  76, "restart_interval": None},
-    {"name": "SMC Forex Bot",      "script": "38_smc_forex_metals_bot.py","start_delay":  84, "restart_interval": None},
-    {"name": "Mayank Bot",         "script": "39_mayank_bot.py",          "start_delay":  92, "restart_interval": None},
-    {"name": "AI ABR1 Detector",   "script": "40_ai_abr1_bot.py",         "start_delay": 100, "restart_interval": None},
-    {"name": "Whale Logger",       "script": "41_whale_logger_bot.py",    "start_delay": 108, "restart_interval": None},
-    {"name": "Funding Logger",     "script": "42_funding_logger_bot.py",  "start_delay": 116, "restart_interval": None},
-    {"name": "BTC SMC Bot",        "script": "43_btc_smc_strategy.py",    "start_delay": 124, "restart_interval": None},
-    {"name": "Market Tracker",     "script": "44_market_tracker.py",      "start_delay": 132, "restart_interval": None},
-    {"name": "Quasimodo Bot",      "script": "45_quasimodo_bot.py",       "start_delay": 140, "restart_interval": None},
-    {"name": "SMC ML Sniper",      "script": "46_smc_ml_sniper.py",       "start_delay": 148, "restart_interval": None},
-    {"name": "Regime Detector",    "script": "47_regime_detector.py",     "start_delay": 157, "restart_interval": None},
-    {"name": "Bot Regime Analyzer","script": "48_bot_regime_analyzer.py", "start_delay": 164, "restart_interval": None},
-    {"name": "Signal Orchestrator","script": "49_signal_orchestrator.py", "start_delay": 172, "restart_interval": None},
-    {"name": "UFI1 Fib Bot",       "script": "50_ufi1_bot.py",            "start_delay": 180, "restart_interval": None},
-
-    # ── Dashboard ─────────────────────────────────────────────────────
-    {"name": "Dashboard",          "script": "70_dashboard.py",           "start_delay":   2, "restart_interval": None},
+    # Processes will be added here incrementally — one PR at a time.
+    # Example (uncomment when ready):
+    # {"name": "Data Ingestion", "script": "10_data_ingestion.py", "start_delay": 0, "restart_interval": None},
 ]
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
-_running: dict[str, dict] = {}       # name → {process, info, start_time}
-_crashes: dict[str, list[float]] = {} # name → [crash timestamps]
+_running: dict[str, dict] = {}
+_crashes: dict[str, list[float]] = {}
 
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 def _run_bootstrap() -> None:
-    """Runs the bootstrap sequence synchronously before any bot starts."""
-    logger.info("Running bootstrap (coin list + leverage + DB schema)...")
+    """
+    Runs the bootstrap sequence before any bot starts:
+      1. Fetch active coin list from Binance  -> coins.json
+      2. Fetch max leverage per symbol        -> max_leverage.json
+      3. Initialise DB schema (OHLCV + indicator tables only)
+    """
+    logger.info("Running bootstrap...")
     try:
         from core.bootstrap import run as bootstrap_run
         coins, leverage_map = bootstrap_run()
@@ -119,7 +85,7 @@ def _start(info: dict) -> None:
     if not os.path.exists(script):
         logger.warning(f"Script not found, skipping: {script}")
         return
-    logger.info(f"Starting  [{name}]  ({script})")
+    logger.info(f"Starting [{name}] ({script})")
     p = subprocess.Popen([sys.executable, script])
     _running[name] = {
         "process":    p,
@@ -132,7 +98,7 @@ def _stop(name: str) -> None:
     if name not in _running:
         return
     p = _running[name]["process"]
-    logger.info(f"Stopping  [{name}]...")
+    logger.info(f"Stopping [{name}]...")
     p.terminate()
     try:
         p.wait(timeout=5)
@@ -166,9 +132,15 @@ def main() -> None:
     logger.info("V4 Crypto Trading Bot System — Watchdog starting")
     logger.info("=" * 60)
 
+    # Step 1: Bootstrap (always runs)
     _run_bootstrap()
 
-    # Staggered start — sorted by start_delay
+    # Step 2: Start configured processes (none yet)
+    if not PROCESSES:
+        logger.info("No processes configured yet — bootstrap complete, exiting.")
+        logger.info("Add processes to PROCESSES list as modules are implemented.")
+        return
+
     sorted_procs = sorted(PROCESSES, key=lambda p: p.get("start_delay", 0))
     last = 0
     for info in sorted_procs:
@@ -180,55 +152,37 @@ def main() -> None:
         last = delay
 
     total = sorted_procs[-1].get("start_delay", 0) if sorted_procs else 0
-    logger.info(
-        f"All processes started (staggered over {total}s). "
-        f"Monitoring loop active."
-    )
+    logger.info(f"All processes started (staggered over {total}s). Monitoring active.")
 
+    # Step 3: Monitor loop
     try:
         while True:
             now = time.time()
-
             for info in PROCESSES:
                 name = info["name"]
-
-                # Process not tracked → start it
                 if name not in _running:
                     if not os.path.exists(info["script"]):
                         continue
-                    logger.error(f"[{name}] missing from registry — restarting.")
+                    logger.error(f"[{name}] missing — restarting.")
                     _start(info)
                     continue
-
                 tracker = _running[name]
                 rc = tracker["process"].poll()
-
                 if rc is not None:
-                    # Process has exited
-                    logger.error(
-                        f"[{name}] exited with code {rc}. "
-                        f"Scheduling restart..."
-                    )
+                    logger.error(f"[{name}] exited (code {rc}) — scheduling restart.")
                     del _running[name]
                     delay = _backoff_delay(name)
                     if delay > 0:
-                        logger.info(f"[{name}] back-off delay: {delay}s")
                         time.sleep(delay)
                     _start(info)
                     continue
-
-                # Scheduled restart (RAM recycle)
                 interval = info.get("restart_interval")
                 if interval:
                     uptime = now - tracker["start_time"]
                     if uptime >= interval:
-                        logger.info(
-                            f"[{name}] scheduled restart "
-                            f"(uptime {uptime / 3600:.1f}h ≥ {interval / 3600:.0f}h limit)."
-                        )
+                        logger.info(f"[{name}] scheduled restart (uptime {uptime/3600:.1f}h).")
                         _stop(name)
                         _start(info)
-
             time.sleep(10)
 
     except KeyboardInterrupt:
