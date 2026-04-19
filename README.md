@@ -52,6 +52,55 @@ Multi-bot Binance Futures trading system with Telegram signalling via Cornix.
 | `70–89` | Dashboard, utilities, chart services |
 | `90–99` | Backtests and model training (run manually) |
 
+## Prerequisites
+
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| Python | 3.11+ | |
+| PostgreSQL | 14+ | |
+| Binance Futures account | — | API key with read + trade permissions |
+| Telegram Bot Token | — | Via [@BotFather](https://t.me/BotFather) |
+
+### Optional: TimescaleDB
+
+The schema is fully compatible with [TimescaleDB](https://www.timescale.com/) — a PostgreSQL extension that adds automatic time-based partitioning (hypertables), native column compression (~10× size reduction), and fast time-range queries via chunk pruning.
+
+**Without TimescaleDB** the system runs fine — BRIN indexes on `open_time` already provide good time-series performance for vanilla PostgreSQL.
+
+**With TimescaleDB** you additionally get:
+- Automatic chunk pruning: `WHERE open_time > NOW() - INTERVAL '7 days'` scans only 1–2 chunks instead of the full table
+- Native compression: tables shrink to ~10% of their uncompressed size
+- Built-in `time_bucket()` aggregation function
+
+#### Installation (Debian/Ubuntu)
+
+```bash
+# Add TimescaleDB repo
+sudo apt install -y gnupg postgresql-common apt-transport-https lsb-release wget
+sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
+
+# Install for your PostgreSQL version (e.g. 16)
+sudo apt install -y timescaledb-2-postgresql-16
+
+# Tune PostgreSQL for TimescaleDB
+sudo timescaledb-tune --quiet --yes
+
+sudo systemctl restart postgresql
+```
+
+#### Activation (once per database)
+
+```sql
+-- Run once in your target database (e.g. cryptodata)
+CREATE EXTENSION IF NOT EXISTS timescaledb;
+```
+
+The bootstrap sequence (`core/bootstrap.py`) detects whether TimescaleDB is installed and automatically converts all OHLCV and indicator tables to hypertables if the extension is present. No manual steps required beyond installing the extension and restarting PostgreSQL.
+
+If TimescaleDB is not installed, the bootstrap skips the hypertable conversion silently and all tables remain standard PostgreSQL tables.
+
+---
+
 ## Quickstart
 
 ```bash
@@ -73,7 +122,9 @@ cp .env.example .env
 # 5. Create PostgreSQL database
 createdb cryptodata
 
-# 6. Start (bootstrap runs automatically)
+# 6. (Optional) Install TimescaleDB — see Prerequisites above
+
+# 7. Start (bootstrap runs automatically)
 python 00_main_watchdog.py
 ```
 
@@ -126,3 +177,4 @@ Not in repo — too large for version control. Required files (in `models/`):
 ## Change log format
 
 Every PR includes a file `changes/Readme_<PR#>.md` listing all changes.
+

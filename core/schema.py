@@ -359,12 +359,122 @@ def _operational_tables_ddl() -> str:
     """
 
 
+# ── TimescaleDB support ───────────────────────────────────────────────────────
+
+# Chunk interval per timeframe — shorter TFs produce more rows, use smaller chunks
+# so that recent-data queries hit as few chunks as possible.
+_TIMESCALE_CHUNK_INTERVALS: dict[str, str] = {
+    "10s": "1 day",
+    "1m":  "3 days",
+    "3m":  "7 days",
+    "5m":  "7 days",
+    "15m": "14 days",
+    "30m": "14 days",
+    "1h":  "30 days",
+    "2h":  "30 days",
+    "4h":  "60 days",
+    "6h":  "60 days",
+    "8h":  "60 days",
+    "12h": "90 days",
+    "1d":  "180 days",
+    "3d":  "180 days",
+    "1w":  "365 days",
+    "1M":  "365 days",
+}
+
+
+def _timescaledb_available(conn) -> bool:
+    """Returns True if the TimescaleDB extension is installed in this database."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM pg_extension WHERE extname = 'timescaledb'"
+        )
+        return cur.fetchone()[0] > 0
+
+
+def _is_hypertable(conn, table_name: str) -> bool:
+    """Returns True if the table has already been converted to a hypertable."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM timescaledb_information.hypertables "
+            "WHERE hypertable_name = %s",
+            (table_name,),
+        )
+        return cur.fetchone()[0] > 0
+
+
+def _convert_to_hypertables(conn) -> None:
+    """
+    Converts all OHLCV and indicator tables to TimescaleDB hypertables.
+
+    - Safe to call repeatedly: skips tables that are already hypertables.
+    - Each timeframe gets a tuned chunk_time_interval (see _TIMESCALE_CHUNK_INTERVALS).
+    - Also enables native compression with a 7-day compress_after policy.
+    - Called automatically by create_all_tables() when TimescaleDB is detected.
+    """
+    tables_to_convert = (
+        [(f"ohlcv_{tf}", tf) for tf in OHLCV_TIMEFRAMES]
+        + [(f"indicators_{tf}", tf) for tf in INDICATOR_TIMEFRAMES]
+    )
+
+    converted = 0
+    for table_name, tf in tables_to_convert:
+        if _is_hypertable(conn, table_name):
+            logger.debug(f"  Already hypertable: {table_name}")
+            continue
+
+        chunk_interval = _TIMESCALE_CHUNK_INTERVALS.get(tf, "30 days")
+        with conn.cursor() as cur:
+            # create_hypertable migrates existing rows and sets up chunking.
+            # migrate_data=TRUE handles tables that already contain rows.
+            cur.execute(
+                f"SELECT create_hypertable("
+                f"  '{table_name}', 'open_time',"
+                f"  chunk_time_interval => INTERVAL '{chunk_interval}',"
+                f"  migrate_data => TRUE,"
+                f"  if_not_exists => TRUE"
+                f");"
+            )
+            # Enable compression: segment by symbol so each chunk is sorted
+            # by symbol + time, maximising compression ratios.
+            cur.execute(
+                f"ALTER TABLE {table_name} SET ("
+                f"  timescaledb.compress,"
+                f"  timescaledb.compress_segmentby = 'symbol',"
+                f"  timescaledb.compress_orderby = 'open_time DESC'"
+                f");"
+            )
+            # Compress chunks older than 7 days automatically.
+            cur.execute(
+                f"SELECT add_compression_policy("
+                f"  '{table_name}',"
+                f"  INTERVAL '7 days',"
+                f"  if_not_exists => TRUE"
+                f");"
+            )
+        conn.commit()
+        converted += 1
+        logger.info(f"  ✓ Hypertable: {table_name}  (chunk={chunk_interval})")
+
+    logger.info(
+        f"TimescaleDB: {converted} tables converted, "
+        f"{len(tables_to_convert) - converted} already done."
+    )
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def create_all_tables() -> None:
     """
     Creates all OHLCV tables, indicator tables, and operational tables.
     Safe to call repeatedly — all DDL uses IF NOT EXISTS.
+
+    TimescaleDB auto-detection:
+      If the timescaledb extension is present in the database, all OHLCV and
+      indicator tables are automatically converted to hypertables with tuned
+      chunk intervals and native compression enabled.
+      If TimescaleDB is not installed, the step is silently skipped and all
+      tables remain standard PostgreSQL tables.
     """
     with db_connection() as conn:
         with conn.cursor() as cur:
@@ -386,6 +496,16 @@ def create_all_tables() -> None:
             cur.execute(_operational_tables_ddl())
 
         conn.commit()
+
+        # TimescaleDB hypertable conversion (automatic, optional)
+        if _timescaledb_available(conn):
+            logger.info("TimescaleDB detected — converting tables to hypertables...")
+            _convert_to_hypertables(conn)
+        else:
+            logger.info(
+                "TimescaleDB not installed — using standard PostgreSQL tables. "
+                "See README Prerequisites for optional installation instructions."
+            )
 
     logger.info(
         f"Schema initialisation complete — "
@@ -423,3 +543,4 @@ def verify_schema() -> dict:
                 else:
                     ok.append(tname)
     return {"missing": missing, "ok": ok}
+
