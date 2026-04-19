@@ -102,10 +102,19 @@ def fetch_max_leverage(coins: list[str]) -> dict[str, int]:
     leverage_map: dict[str, int] = {}
     errors = 0
 
-    # The endpoint supports fetching all symbols at once when symbol param is omitted
+    # The endpoint supports fetching all symbols at once when symbol param is omitted.
+    # We use Binance server time instead of local time to avoid 401 errors caused
+    # by clock drift (common on Windows — Binance rejects requests with timestamp
+    # more than ±1000ms from server time).
     try:
-        ts = int(time.time() * 1000)
-        params = {"timestamp": ts}
+        server_time_resp = requests.get(BASE_URL + "/fapi/v1/time", timeout=10)
+        server_time_resp.raise_for_status()
+        server_ts = server_time_resp.json()["serverTime"]
+
+        params = {
+            "timestamp":  server_ts,
+            "recvWindow": 10000,    # 10s tolerance window — extra safety margin
+        }
         query = urlencode(params)
         sig = hmac.new(
             BINANCE_SECRET.encode(), query.encode(), hashlib.sha256
@@ -207,3 +216,4 @@ def run() -> tuple[list[str], dict[str, int]]:
     logger.info("Bootstrap complete.")
     logger.info("=" * 60)
     return coins, leverage_map
+
