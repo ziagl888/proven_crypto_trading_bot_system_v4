@@ -140,6 +140,32 @@ INDICATOR_COLUMNS: list[tuple[str, str]] = [
     ("dist_close_ema200_pct", "REAL"),  # (close - ema_200) / ema_200
     ("macd_hist_fast",        "REAL"),  # macd_dif_fast_9_21_9 - macd_dea_fast_9_21_9
     ("macd_hist_normal",      "REAL"),  # macd_dif_normal_12_26_9 - macd_dea_normal_12_26_9
+
+    # ── Swing Highs / Lows ────────────────────────────────────────────
+    # Last 5 confirmed swing highs and lows (price + age in candles).
+    # Used by: fibonacci, 7_pattern_detector, 21_btc_smc, 22_ip_pattern,
+    #          24_quasimodo, 25_smc_sniper, 29_ufi1, trade monitor
+    # order parameter (candles left+right) is timeframe-dependent — see engine.
+    ("swing_high_1",     "REAL"),    # most recent swing high price
+    ("swing_high_1_age", "INTEGER"), # candles since swing_high_1
+    ("swing_high_2",     "REAL"),
+    ("swing_high_2_age", "INTEGER"),
+    ("swing_high_3",     "REAL"),
+    ("swing_high_3_age", "INTEGER"),
+    ("swing_high_4",     "REAL"),
+    ("swing_high_4_age", "INTEGER"),
+    ("swing_high_5",     "REAL"),
+    ("swing_high_5_age", "INTEGER"),
+    ("swing_low_1",      "REAL"),    # most recent swing low price
+    ("swing_low_1_age",  "INTEGER"), # candles since swing_low_1
+    ("swing_low_2",      "REAL"),
+    ("swing_low_2_age",  "INTEGER"),
+    ("swing_low_3",      "REAL"),
+    ("swing_low_3_age",  "INTEGER"),
+    ("swing_low_4",      "REAL"),
+    ("swing_low_4_age",  "INTEGER"),
+    ("swing_low_5",      "REAL"),
+    ("swing_low_5_age",  "INTEGER"),
 ]
 
 
@@ -365,4 +391,5 @@ def verify_schema() -> dict:
                 cur.execute("SELECT to_regclass(%s)", (tname,))
                 (missing if cur.fetchone()[0] is None else ok).append(tname)
     return {"ok": ok, "missing": missing}
+
 

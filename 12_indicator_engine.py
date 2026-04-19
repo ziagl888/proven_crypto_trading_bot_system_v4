@@ -215,20 +215,119 @@ def _support_resistance(df: pd.DataFrame, window: int = 20) -> dict[str, float]:
         return {"support_price": 0.0, "resistance_price": 0.0}
 
 
-def _fibonacci(df: pd.DataFrame) -> dict[str, float]:
+# Timeframe-dependent order parameter for swing detection.
+# order=N means N candles left AND right must be lower/higher.
+_SWING_ORDER: dict[str, int] = {
+    "30m": 5,
+    "1h":  5,
+    "2h":  8,
+    "4h":  10,
+    "1d":  10,
+    "1w":  5,
+}
+_SWING_COUNT = 5   # store last N swing highs and lows
+
+
+def _swings(df: pd.DataFrame, tf: str) -> dict[str, float | int]:
+    """
+    Detects the last _SWING_COUNT confirmed swing highs and lows.
+    Returns price + age (candles since the swing) for each.
+
+    A swing high is a local maximum: N candles left and right are all lower.
+    A swing low is a local minimum: N candles left and right are all higher.
+    order is timeframe-dependent (see _SWING_ORDER).
+    """
+    result: dict[str, float | int] = {}
     try:
-        hi   = float(df["high"].max())
-        lo   = float(df["low"].min())
-        diff = hi - lo
-        result = {}
+        order  = _SWING_ORDER.get(tf, 5)
+        highs  = df["high"].values
+        lows   = df["low"].values
+        n      = len(df)
+
+        high_idx = scipy.signal.argrelextrema(highs, np.greater, order=order)[0]
+        low_idx  = scipy.signal.argrelextrema(lows,  np.less,    order=order)[0]
+
+        # Most recent first
+        sh = list(reversed(high_idx.tolist()))[:_SWING_COUNT]
+        sl = list(reversed(low_idx.tolist()))[:_SWING_COUNT]
+
+        for i in range(1, _SWING_COUNT + 1):
+            if i - 1 < len(sh):
+                idx = sh[i - 1]
+                result[f"swing_high_{i}"]     = float(highs[idx])
+                result[f"swing_high_{i}_age"] = int(n - 1 - idx)
+            else:
+                result[f"swing_high_{i}"]     = 0.0
+                result[f"swing_high_{i}_age"] = 0
+
+            if i - 1 < len(sl):
+                idx = sl[i - 1]
+                result[f"swing_low_{i}"]      = float(lows[idx])
+                result[f"swing_low_{i}_age"]  = int(n - 1 - idx)
+            else:
+                result[f"swing_low_{i}"]      = 0.0
+                result[f"swing_low_{i}_age"]  = 0
+
+    except Exception:
+        for i in range(1, _SWING_COUNT + 1):
+            result[f"swing_high_{i}"]     = 0.0
+            result[f"swing_high_{i}_age"] = 0
+            result[f"swing_low_{i}"]      = 0.0
+            result[f"swing_low_{i}_age"]  = 0
+
+    return result
+
+
+def _fibonacci(df: pd.DataFrame, tf: str) -> dict[str, float]:
+    """
+    Fibonacci retracements and extensions based on the most recent
+    confirmed swing high and swing low.
+
+    fib_support_*   = retracement levels from last swing high DOWN
+                      (where price finds support on a pullback in uptrend)
+    fib_resistance_* = retracement levels from last swing low UP
+                      (where price finds resistance on a rally in downtrend)
+    fib_extension_* = extension levels above last swing high
+                      (upside targets beyond the swing high)
+
+    If no swing is detected, falls back to absolute period high/low.
+    """
+    try:
+        order     = _SWING_ORDER.get(tf, 5)
+        highs_arr = df["high"].values
+        lows_arr  = df["low"].values
+
+        high_idx = scipy.signal.argrelextrema(highs_arr, np.greater, order=order)[0]
+        low_idx  = scipy.signal.argrelextrema(lows_arr,  np.less,    order=order)[0]
+
+        # Use most recent swing high and swing low
+        sh = float(highs_arr[high_idx[-1]]) if len(high_idx) > 0 else float(df["high"].max())
+        sl = float(lows_arr[low_idx[-1]])   if len(low_idx)  > 0 else float(df["low"].min())
+
+        result: dict[str, float] = {}
+        diff = sh - sl
+        if diff <= 0:
+            return result
+
+        # Retracement from swing high downward → Support levels
+        # Price pulls back from sh toward sl — these are buy zones
         for lvl in [0.236, 0.382, 0.5, 0.618, 0.786]:
-            key = str(lvl).replace(".", "_")
-            price = hi - diff * lvl
-            result[f"fib_support_{key}"]    = price
+            key   = str(lvl).replace(".", "_")
+            price = sh - diff * lvl
+            result[f"fib_support_{key}"] = price
+
+        # Retracement from swing low upward → Resistance levels
+        # Price rallies from sl toward sh — these are sell zones
+        for lvl in [0.236, 0.382, 0.5, 0.618, 0.786]:
+            key   = str(lvl).replace(".", "_")
+            price = sl + diff * lvl
             result[f"fib_resistance_{key}"] = price
+
+        # Extensions above swing high → Upside targets
         for ext in [1.272, 1.618, 2.618]:
-            key = str(ext).replace(".", "_")
-            result[f"fib_extension_{key}"] = hi + diff * (ext - 1)
+            key   = str(ext).replace(".", "_")
+            result[f"fib_extension_{key}"] = sh + diff * (ext - 1.0)
+
         return result
     except Exception:
         return {}
@@ -329,8 +428,12 @@ def calculate_indicators(df: pd.DataFrame, tf: str) -> pd.DataFrame:
     for k, v in sr.items():
         r[k] = v
 
-    # Fibonacci (scalar → broadcast)
-    fibs = _fibonacci(df)
+    # Swing Highs / Lows
+    swings = _swings(df, tf)
+    r.update(swings)
+
+    # Fibonacci — based on actual swing high/low (not period max/min)
+    fibs = _fibonacci(df, tf)
     for k, v in fibs.items():
         r[k] = v
 
@@ -716,6 +819,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
