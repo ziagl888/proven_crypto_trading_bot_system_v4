@@ -346,8 +346,11 @@ def calculate_indicators(df: pd.DataFrame, tf: str) -> pd.DataFrame:
 
     # Assemble result DataFrame
     ind_df = pd.DataFrame(r, index=df.index)
-    ind_df["open_time"] = df["open_time"].values
-    ind_df["close"]     = df["close"].values
+    # Keep as pandas Series (not .values) to preserve UTC timezone info.
+    # .values would return numpy datetime64 without tzinfo, causing psycopg2
+    # to interpret timestamps as local time instead of UTC.
+    ind_df["open_time"] = df["open_time"]
+    ind_df["close"]     = df["close"]
     ind_df["symbol"]    = df["symbol"].iloc[0] if not df.empty else ""
     return ind_df
 
@@ -399,6 +402,10 @@ def _write_indicators_batch(tf: str, results: list[pd.DataFrame]) -> int:
         return 0
 
     combined = pd.concat(results, ignore_index=True)
+
+    # Ensure open_time is UTC-aware after concat (concat can drop tz info)
+    if "open_time" in combined.columns:
+        combined["open_time"] = pd.to_datetime(combined["open_time"], utc=True)
 
     # Build column list from schema
     valid_cols = ["symbol", "open_time", "close"] + \
@@ -658,4 +665,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
