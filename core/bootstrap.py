@@ -187,7 +187,7 @@ def run() -> tuple[list[str], dict[str, int]]:
 
     Returns (coins, leverage_map).
     """
-    from core.schema import create_all_tables, verify_schema
+    from core.schema import create_all_tables, verify_schema, migrate_schema
 
     logger.info("=" * 60)
     logger.info("Bootstrap: fetching active coin list...")
@@ -207,6 +207,9 @@ def run() -> tuple[list[str], dict[str, int]]:
     logger.info("Bootstrap: initialising database schema...")
     create_all_tables()
 
+    logger.info("Bootstrap: running schema migration (adding new columns if any)...")
+    migrate_schema()
+
     result = verify_schema()
     if result["missing"]:
         logger.error(f"Schema verification FAILED — missing tables: {result['missing']}")
@@ -216,4 +219,5 @@ def run() -> tuple[list[str], dict[str, int]]:
     logger.info("Bootstrap complete.")
     logger.info("=" * 60)
     return coins, leverage_map
+
 

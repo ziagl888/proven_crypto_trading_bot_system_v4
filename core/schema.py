@@ -374,6 +374,55 @@ def create_all_tables() -> None:
     )
 
 
+def migrate_schema() -> None:
+    """
+    Adds any columns that exist in INDICATOR_COLUMNS but are missing
+    from the actual DB tables. Safe to run repeatedly — uses
+    IF NOT EXISTS for each ALTER TABLE.
+
+    Call this after create_all_tables() to handle schema upgrades
+    without dropping and recreating tables (which would lose all data).
+    """
+    with db_connection() as conn:
+        with conn.cursor() as cur:
+            for tf in INDICATOR_TIMEFRAMES:
+                tname = f"indicators_{tf}"
+
+                # Get existing columns from DB
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = %s
+                      AND table_schema = 'public'
+                    """,
+                    (tname,),
+                )
+                existing = {row[0] for row in cur.fetchall()}
+
+                # Add any missing columns
+                added = []
+                for col, dtype in INDICATOR_COLUMNS:
+                    if col not in existing:
+                        cur.execute(
+                            f"ALTER TABLE {tname} "
+                            f"ADD COLUMN IF NOT EXISTS {col} {dtype}"
+                        )
+                        added.append(col)
+
+                if added:
+                    logger.info(
+                        f"Migration: added {len(added)} columns to {tname}: "
+                        f"{added}"
+                    )
+                else:
+                    logger.debug(f"Migration: {tname} is up to date.")
+
+        conn.commit()
+
+    logger.info("Schema migration complete.")
+
+
 def verify_schema() -> dict:
     """
     Verifies all expected tables exist.
@@ -391,5 +440,6 @@ def verify_schema() -> dict:
                 cur.execute("SELECT to_regclass(%s)", (tname,))
                 (missing if cur.fetchone()[0] is None else ok).append(tname)
     return {"ok": ok, "missing": missing}
+
 
 
