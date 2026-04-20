@@ -975,12 +975,13 @@ def main() -> None:
     logger.info("Indicator Engine V4 — starting")
     logger.info("=" * 60)
 
-    check_schema()
+    verify_schema()
     poll_and_process()
 
 
 if __name__ == "__main__":
     main()
+
 
 
 
