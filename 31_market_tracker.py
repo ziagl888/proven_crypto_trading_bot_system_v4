@@ -1,7 +1,7 @@
 # 31_market_tracker.py
 # Market Tracker V4 — hourly and half-hourly channel reports
 #
-# Posts 6 jobs to PUMP_DUMP_SENTIMENT_CHANNEL_ID:
+# Posts 6 jobs to SENTIMENT_CHANNEL_ID:
 #
 #   XX:00:01  Signal Summary      — open/closed trades last 24h by category
 #   XX:00:15  Main Volume Report  — BTC, ETH, Total Alt Market
@@ -52,14 +52,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from core.config import PUMP_DUMP_SENTIMENT_CHANNEL_ID
+from core.config import SENTIMENT_CHANNEL_ID
 from core.database import db_connection
 from core.schema import verify_schema
 from core.shutdown import ShutdownHandler
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-CHANNEL_ID = PUMP_DUMP_SENTIMENT_CHANNEL_ID
+CHANNEL_ID = SENTIMENT_CHANNEL_ID
 
 EXCLUDED_FROM_TOTAL = {
     "BTCUSDT", "XAUUSDT", "XAGUSDT", "PAXGUSDT", "BTCDOMUSDT",
@@ -869,3 +869,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Market Tracker stopped (Ctrl+C).")
+
