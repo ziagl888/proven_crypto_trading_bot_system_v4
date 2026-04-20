@@ -697,7 +697,8 @@ async def _candle_close_event_writer() -> None:
             continue
 
         try:
-            with db_connection() as conn:
+            conn = get_db_connection()
+            try:
                 with conn.cursor() as cur:
                     for tf, count in snapshot.items():
                         cur.execute(
@@ -712,6 +713,8 @@ async def _candle_close_event_writer() -> None:
                             (tf, count),
                         )
                 conn.commit()
+            finally:
+                conn.close()
         except Exception as e:
             logger.warning(f"candle_close_event batch write failed: {e}")
             # Put counts back so they're not lost
@@ -835,6 +838,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
