@@ -364,7 +364,8 @@ def _check_price_moves(symbol: str, data: list, now: datetime.datetime,
             f"</pre>"
         )
 
-        _send_outbox(PUMP_DUMP_MARKET_CHANNEL_ID, msg)
+        chart_path = generate_chart(symbol, minutes=240)
+        _send_outbox(PUMP_DUMP_MARKET_CHANNEL_ID, msg, chart_path)
 
         extend = abs(chg_pct) >= 10.0
         _log_event(symbol, f"PRICE_{direction}_{t_label}", current_price, chg_pct, 0.0)
@@ -433,7 +434,8 @@ def _check_volume_explosion(symbol: str, data: list, now: datetime.datetime,
         f"</pre>"
     )
 
-    _send_outbox(PUMP_DUMP_MARKET_CHANNEL_ID, msg)
+    chart_path = generate_chart(symbol, minutes=240)
+    _send_outbox(PUMP_DUMP_MARKET_CHANNEL_ID, msg, chart_path)
     _log_event(symbol, f"VOLUME_{matched_label.split()[0]}", current_price, p_chg, vol_ratio)
     logger.info(f"VOLUME ALERT: {symbol} {vol_ratio:.1f}x avg (price {p_chg:+.2f}%)")
     return True
