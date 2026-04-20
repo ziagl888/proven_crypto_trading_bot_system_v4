@@ -276,6 +276,43 @@ def _delete_indicators_from(
         return 0
 
 
+# ── Trigger indicator engine ─────────────────────────────────────────────────
+
+def _trigger_indicator_recalc(affected_tfs: set[str]) -> None:
+    """
+    After filling gaps and deleting stale indicator rows, update
+    candle_close_events for the affected timeframes so the indicator
+    engine picks up the change within its 10s poll interval.
+
+    We set closed_at to NOW() which is newer than _LAST_PROCESSED in
+    the engine — this guarantees the engine runs a fresh cycle.
+    """
+    if not affected_tfs:
+        return
+
+    try:
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                for tf in affected_tfs:
+                    cur.execute(
+                        """
+                        INSERT INTO candle_close_events
+                            (timeframe, closed_at, symbol_count)
+                        VALUES (%s, NOW(), 0)
+                        ON CONFLICT (timeframe) DO UPDATE SET
+                            closed_at    = EXCLUDED.closed_at,
+                            symbol_count = EXCLUDED.symbol_count
+                        """,
+                        (tf,),
+                    )
+            conn.commit()
+        logger.info(
+            f"Triggered indicator recalculation for: {sorted(affected_tfs)}"
+        )
+    except Exception as e:
+        logger.warning(f"Could not trigger indicator recalc: {e}")
+
+
 # ── Per-symbol gap check + fill ───────────────────────────────────────────────
 
 def _check_and_fill_symbol(symbol: str) -> dict:
@@ -383,6 +420,16 @@ def run_gap_check() -> None:
         if symbols_with_gaps:
             logger.info(f"Affected symbols: {symbols_with_gaps[:20]}"
                        f"{'...' if len(symbols_with_gaps) > 20 else ''}")
+
+        # Trigger indicator engine to recalculate affected timeframes
+        # Only trigger for indicator timeframes (not 5m/15m etc.)
+        from core.schema import INDICATOR_TIMEFRAMES
+        affected_indicator_tfs = {
+            tf for tf in INGEST_TIMEFRAMES
+            if tf in INDICATOR_TIMEFRAMES
+        }
+        if affected_indicator_tfs and total_ind > 0:
+            _trigger_indicator_recalc(affected_indicator_tfs)
     else:
         logger.info(
             f"Gap check complete in {elapsed:.0f}s — "
@@ -437,5 +484,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
