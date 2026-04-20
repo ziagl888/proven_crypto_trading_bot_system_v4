@@ -315,6 +315,10 @@ def _check_price_moves(symbol: str, data: list, now: datetime.datetime,
     """
     Checks for extreme price moves across multiple timeframes.
     Returns True if an alert was sent.
+
+    CONTINUITY CHECK: Only alerts if the price data in the lookback window
+    is continuous (no gaps > 30s). This prevents false alerts after restarts
+    or reconnects where the RAM buffer has stale data mixed with fresh data.
     """
     for seconds_back, min_pct, t_label in PRICE_THRESHOLDS:
         ref = _find_bucket_before(data, now, seconds_back)
@@ -323,6 +327,23 @@ def _check_price_moves(symbol: str, data: list, now: datetime.datetime,
 
         ref_price = float(ref["p"])
         if ref_price <= 0:
+            continue
+
+        # Continuity check: verify no gaps in the lookback window
+        # Get all buckets in the window and check for gaps > 30s
+        window_buckets = _find_bucket_range(data, now, seconds_back + 30)
+        if len(window_buckets) < 2:
+            continue
+        has_gap = False
+        for i in range(1, len(window_buckets)):
+            t_prev = _bucket_ts(window_buckets[i-1])
+            t_curr = _bucket_ts(window_buckets[i])
+            if t_prev and t_curr:
+                gap = (t_curr - t_prev).total_seconds()
+                if gap > 30:  # more than 3× normal poll interval
+                    has_gap = True
+                    break
+        if has_gap:
             continue
 
         chg_pct = (current_price / ref_price - 1) * 100
