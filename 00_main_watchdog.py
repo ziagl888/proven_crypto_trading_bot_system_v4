@@ -64,6 +64,11 @@ PROCESSES: list[dict] = [
     {"name": "Housekeeping",      "script": "23_housekeeping.py",     "start_delay": 15, "restart_interval": None},
     # ── Infrastructure ────────────────────────────────────────────────
     {"name": "Telegram Bot",      "script": "20_telegram_bot.py",     "start_delay": 20, "restart_interval": None},
+    # ── Market monitoring ─────────────────────────────────────────────
+    {"name": "Pump/Dump Detector","script": "30_pump_dump_detector.py","start_delay": 25, "restart_interval": None},
+    {"name": "Market Tracker",    "script": "31_market_tracker.py",   "start_delay": 30, "restart_interval": None},
+    # ── Trade management ──────────────────────────────────────────────
+    {"name": "Trade Monitor",     "script": "21_trade_monitor.py",    "start_delay": 35, "restart_interval": None},
 ]
 
 # ── Shutdown coordination ─────────────────────────────────────────────────────
@@ -242,6 +247,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
