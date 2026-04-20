@@ -90,12 +90,12 @@ COOLDOWN_EXTEND_S  = 900    # 15 min for big moves (>10% or mega volume)
 
 # Round level config: symbols and their step sizes
 ROUND_LEVEL_CONFIG = {
-    "BTCUSDT":    {"step": 1000, "decimals": 0},
+    "BTCUSDT":    {"step":  500, "decimals": 0},
     "ETHUSDT":    {"step":  100, "decimals": 0},
     "BNBUSDT":    {"step":   50, "decimals": 0},
     "SOLUSDT":    {"step":   10, "decimals": 1},
     "XRPUSDT":    {"step":  0.1, "decimals": 3},
-    "BTCDOMUSDT": {"step":    1, "decimals": 0},
+    "BTCDOMUSDT": {"step":  100, "decimals": 0},
 }
 ROUND_LEVEL_COOLDOWN_S = 180   # 3 min between round level alerts per symbol
 
