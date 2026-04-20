@@ -58,13 +58,17 @@ def wait_for(
 ) -> bool:
     """
     Blocks until system_state[key] == 'true'.
-    Logs a status message every log_interval seconds.
-    Returns True when condition met, False on timeout.
+    Uses threading.Event.wait() so it responds immediately to
+    SIGINT (Ctrl+C) instead of blocking in time.sleep().
 
     poll_interval: seconds between DB checks
     log_interval:  seconds between log messages
     timeout:       max seconds to wait (None = wait forever)
+    Returns True when condition met, False on timeout or interrupt.
     """
+    import threading
+    _wake = threading.Event()
+
     start    = time.time()
     last_log = start
 
@@ -86,9 +90,13 @@ def wait_for(
 
         if now - last_log >= log_interval:
             elapsed = int(now - start)
-            logger.info(
-                f"Waiting for {key!r} ... ({elapsed}s elapsed)"
-            )
+            logger.info(f"Waiting for {key!r} ... ({elapsed}s elapsed)")
             last_log = now
 
-        time.sleep(poll_interval)
+        # Interruptible sleep — wakes immediately on Ctrl+C
+        try:
+            _wake.wait(timeout=poll_interval)
+        except (KeyboardInterrupt, SystemExit):
+            logger.info(f"wait_for({key!r}) interrupted — shutting down.")
+            return False
+
