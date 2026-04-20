@@ -710,7 +710,7 @@ def fill_indicator_gaps(tf: str, symbols: list[str]) -> None:
                 filled_rows  += len(ind_to_write)
 
                 # Update cache if this is a priority TF
-                if tf in CACHE_TIMEFRAMES:
+                if tf in INDICATOR_TIMEFRAMES:
                     last_row = ind_to_write.iloc[-1]
                     INDICATOR_CACHE[tf][sym] = {
                         str(k): v for k, v in last_row.to_dict().items()
@@ -778,7 +778,7 @@ def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
     written = _write_indicators_batch(tf, results)
 
     # Step 4: Update cache for priority timeframes
-    if tf in CACHE_TIMEFRAMES:
+    if tf in INDICATOR_TIMEFRAMES:
         cache_updated = 0
         for df_row in results:
             if df_row.empty:
@@ -876,7 +876,7 @@ def poll_and_process() -> None:
 
     # Step 2: Initial full cycle for cache-priority timeframes
     logger.info("Running initial indicator calculation on startup...")
-    for tf in CACHE_TIMEFRAMES:
+    for tf in INDICATOR_TIMEFRAMES:
         run_indicator_cycle(tf, symbols)
         if INDICATOR_CACHE[tf]:
             run_bots_for_timeframe(tf)
