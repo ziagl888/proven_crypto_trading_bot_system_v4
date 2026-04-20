@@ -752,13 +752,18 @@ async def main_async() -> None:
         sys.exit(1)
     logger.info(f"Loaded {len(symbols)} symbols from coins.json.")
 
-    # 3. Initial backfill (skips symbols that already have data)
+    # 3. Reset backfill flag BEFORE starting — other processes must wait
+    # for THIS run to complete, not a previous one stored in DB.
+    from core.system_state import set_state, KEY_BACKFILL_DONE
+    set_state(KEY_BACKFILL_DONE, "false")
+    logger.info("Backfill flag reset — gap checker and indicator engine will wait.")
+
+    # 4. Initial backfill — always fills gaps from last candle to NOW
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, run_initial_backfill, symbols)
 
     # Signal other processes that OHLCV data is ready
-    from core.system_state import set_state, KEY_BACKFILL_DONE
-    set_state(KEY_BACKFILL_DONE)
+    set_state(KEY_BACKFILL_DONE, "true")
     logger.info("Bootstrap flag set: initial_backfill_done — indicator engine may now start.")
 
     # 4. Start gap checker (async scheduler)
@@ -779,6 +784,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
