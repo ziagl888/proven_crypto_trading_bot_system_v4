@@ -98,7 +98,13 @@ def generate_chart(
         path to the PNG file, or None on failure.
     """
     with _CHART_LOCK:
-        return _generate_locked(symbol, minutes, spike_start, spike_end)
+        # Try requested window, fall back to shorter windows if not enough data
+        for try_minutes in [minutes, 120, 60, 30]:
+            path = _generate_locked(symbol, try_minutes, spike_start, spike_end)
+            if path:
+                return path
+        logger.warning(f"No chart data available for {symbol} — alert sent without image")
+        return None
 
 
 def _generate_locked(
@@ -113,7 +119,7 @@ def _generate_locked(
         df = _fetch_5m_candles(symbol, minutes)
 
         if df.empty or len(df) < 3:
-            logger.debug(f"Insufficient data for chart: {symbol}")
+            logger.debug(f"Insufficient data for chart: {symbol} ({len(df)} candles in {minutes}min window)")
             return None
 
         # Price line from close prices
@@ -290,3 +296,4 @@ def _generate_locked(
         if fig is not None:
             plt.close(fig)
         plt.close("all")
+
