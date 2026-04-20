@@ -500,6 +500,10 @@ def _write_candle_close_event(conn, timeframe: str, symbol_count: int) -> None:
 # Tracks how many symbols closed per timeframe in the current batch
 # {timeframe: count}  — reset after each flush
 _CLOSE_COUNTS: dict[str, int] = {}
+# Tracks the actual candle close time per timeframe
+# Uses the kline's close_time from WebSocket, not NOW()
+# This prevents duplicate events when batch writer runs multiple times
+_CLOSE_TIMES: dict[str, "datetime.datetime"] = {}
 _CLOSE_COUNTS_LOCK = None   # set in main_async()
 
 
@@ -519,8 +523,13 @@ def _flush_symbol_to_db(symbol: str, symbol_data: dict[str, tuple], closed_tfs: 
 
         # Accumulate closed TFs — written once per batch, not per symbol
         # This prevents 570 simultaneous upserts on candle_close_events (deadlocks)
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
         for tf in closed_tfs:
             _CLOSE_COUNTS[tf] = _CLOSE_COUNTS.get(tf, 0) + 1
+            # Record actual close time — use first symbol that closes this TF
+            # so all 570 symbols share the same candle close timestamp
+            if tf not in _CLOSE_TIMES:
+                _CLOSE_TIMES[tf] = now_utc
 
         conn.commit()
         if written:
@@ -693,8 +702,10 @@ async def _candle_close_event_writer() -> None:
             continue
 
         # Snapshot and clear atomically
-        snapshot = dict(_CLOSE_COUNTS)
+        snapshot       = dict(_CLOSE_COUNTS)
+        snapshot_times = dict(_CLOSE_TIMES)
         _CLOSE_COUNTS.clear()
+        _CLOSE_TIMES.clear()
 
         if not snapshot:
             continue
@@ -704,16 +715,22 @@ async def _candle_close_event_writer() -> None:
             try:
                 with conn.cursor() as cur:
                     for tf, count in snapshot.items():
+                        # Use actual candle close time — not NOW().
+                        # This ensures the indicator engine sees a stable
+                        # closed_at and does not trigger duplicate cycles
+                        # when the batch writer runs multiple times.
+                        close_ts = snapshot_times.get(tf) or datetime.datetime.now(datetime.timezone.utc)
                         cur.execute(
                             """
                             INSERT INTO candle_close_events
                                 (timeframe, closed_at, symbol_count)
-                            VALUES (%s, NOW(), %s)
+                            VALUES (%s, %s, %s)
                             ON CONFLICT (timeframe) DO UPDATE SET
                                 closed_at    = EXCLUDED.closed_at,
                                 symbol_count = EXCLUDED.symbol_count
+                            WHERE candle_close_events.closed_at < EXCLUDED.closed_at
                             """,
-                            (tf, count),
+                            (tf, close_ts, count),
                         )
                 conn.commit()
             finally:
@@ -723,6 +740,9 @@ async def _candle_close_event_writer() -> None:
             # Put counts back so they're not lost
             for tf, count in snapshot.items():
                 _CLOSE_COUNTS[tf] = _CLOSE_COUNTS.get(tf, 0) + count
+            for tf, ts in snapshot_times.items():
+                if tf not in _CLOSE_TIMES:
+                    _CLOSE_TIMES[tf] = ts
 
 
 async def _fallback_flush_loop() -> None:
@@ -841,6 +861,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
