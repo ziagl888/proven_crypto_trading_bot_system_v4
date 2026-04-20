@@ -416,11 +416,12 @@ def main() -> None:
         logger.critical(f"Missing DB tables: {result['missing']}. Aborting.")
         sys.exit(1)
 
-    # Run immediately on startup
-    logger.info("Running initial gap check on startup...")
-    run_gap_check()
+    # No immediate run on startup — the data ingestion already handles
+    # restart gaps via its initial backfill. Running both simultaneously
+    # would cause double REST burst against Binance rate limits.
+    # Gap checker picks up from the next scheduled :20 or :50 run.
 
-    # Then run at :20 and :50 every hour
+    # Run at :20 and :50 every hour
     while True:
         wait = _seconds_until_next_run()
         next_dt = datetime.datetime.now(datetime.timezone.utc) + \
@@ -436,4 +437,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
