@@ -46,8 +46,9 @@ logger = logging.getLogger(__name__)
 PROCESSES: list[dict] = [
     # ── Core data services ────────────────────────────────────────────
     {"name": "Data Ingestion",    "script": "10_data_ingestion.py",   "start_delay":  0, "restart_interval": None},
+    {"name": "Gap Checker",       "script": "11_gap_checker.py",      "start_delay":  5, "restart_interval": None},
     {"name": "Indicator Engine",  "script": "12_indicator_engine.py", "start_delay": 10, "restart_interval": None},
-    {"name": "Housekeeping",       "script": "23_housekeeping.py",      "start_delay": 15, "restart_interval": None},
+    {"name": "Housekeeping",      "script": "23_housekeeping.py",     "start_delay": 15, "restart_interval": None},
 ]
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
@@ -195,6 +196,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 

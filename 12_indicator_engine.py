@@ -613,6 +613,141 @@ def _calc_symbol_batch(
     return results
 
 
+# ── Indicator gap fill ───────────────────────────────────────────────────────
+
+def _get_indicator_gaps(tf: str, symbols: list[str]) -> dict[str, datetime.datetime]:
+    """
+    Returns dict of {symbol: last_indicator_open_time} for symbols
+    where indicators lag behind OHLCV data.
+    Only returns symbols that actually have a gap.
+    """
+    gaps: dict[str, datetime.datetime] = {}
+    try:
+        placeholders = ",".join(["%s"] * len(symbols))
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                # Get last indicator timestamp per symbol
+                cur.execute(
+                    f"""
+                    SELECT symbol, MAX(open_time) as last_ind
+                    FROM indicators_{tf}
+                    WHERE symbol IN ({placeholders})
+                    GROUP BY symbol
+                    """,
+                    symbols,
+                )
+                ind_latest = {row[0]: row[1] for row in cur.fetchall()}
+
+                # Get last OHLCV timestamp per symbol
+                cur.execute(
+                    f"""
+                    SELECT symbol, MAX(open_time) as last_ohlcv
+                    FROM ohlcv_{tf}
+                    WHERE symbol IN ({placeholders})
+                    GROUP BY symbol
+                    """,
+                    symbols,
+                )
+                ohlcv_latest = {row[0]: row[1] for row in cur.fetchall()}
+
+        # Find symbols where ohlcv is ahead of indicators
+        for sym in symbols:
+            last_ohlcv = ohlcv_latest.get(sym)
+            last_ind   = ind_latest.get(sym)
+
+            if last_ohlcv is None:
+                continue  # No OHLCV data yet
+
+            if last_ohlcv.tzinfo is None:
+                last_ohlcv = last_ohlcv.replace(tzinfo=datetime.timezone.utc)
+
+            if last_ind is None:
+                # No indicators at all — need full calculation
+                gaps[sym] = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
+                continue
+
+            if last_ind.tzinfo is None:
+                last_ind = last_ind.replace(tzinfo=datetime.timezone.utc)
+
+            if last_ohlcv > last_ind:
+                gaps[sym] = last_ind
+
+    except Exception as e:
+        logger.error(f"[{tf}] Indicator gap detection error: {e}")
+
+    return gaps
+
+
+def fill_indicator_gaps(tf: str, symbols: list[str]) -> None:
+    """
+    Detects symbols where indicators lag behind OHLCV data and
+    recalculates ALL missing indicator rows (Option B — full backfill).
+
+    This runs:
+      - On startup (before the normal poll loop)
+      - After the gap checker deletes stale indicator rows
+      - Any time the engine detects missing indicator data
+    """
+    logger.info(f"[{tf}] Checking for indicator gaps...")
+    gaps = _get_indicator_gaps(tf, symbols)
+
+    if not gaps:
+        logger.info(f"[{tf}] No indicator gaps found.")
+        return
+
+    logger.info(f"[{tf}] Found {len(gaps)} symbols with indicator gaps — recalculating...")
+
+    for sym, last_ind_time in gaps.items():
+        try:
+            # Load all OHLCV from last indicator time onward (+ lookback for warmup)
+            days     = _TF_LOOKBACK_DAYS.get(tf, 30)
+            # Use max of: lookback window OR time since last indicator
+            cutoff   = max(
+                datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days),
+                last_ind_time - datetime.timedelta(days=days),
+            )
+
+            with db_connection() as conn:
+                df_sym = pd.read_sql(
+                    f"SELECT symbol, open_time, open, high, low, close, volume "
+                    f"FROM ohlcv_{tf} "
+                    f"WHERE symbol = %s AND open_time >= %s "
+                    f"ORDER BY open_time ASC",
+                    conn,
+                    params=(sym, cutoff),
+                )
+
+            if df_sym.empty or len(df_sym) < 50:
+                continue
+
+            df_sym["open_time"] = pd.to_datetime(df_sym["open_time"], utc=True)
+
+            # Calculate ALL indicators for full history
+            ind_df = calculate_indicators(df_sym, tf)
+
+            # Only write rows AFTER last_ind_time (avoid overwriting correct data)
+            ind_to_write = ind_df[ind_df["open_time"] > last_ind_time]
+
+            if not ind_to_write.empty:
+                _write_indicators_batch(tf, [ind_to_write])
+                logger.info(
+                    f"[{tf}] Gap fill {sym}: wrote {len(ind_to_write)} rows "
+                    f"(from {ind_to_write['open_time'].iloc[0].strftime('%Y-%m-%d %H:%M')})"
+                )
+
+                # Update cache if this is a priority TF
+                if tf in CACHE_TIMEFRAMES:
+                    last_row = ind_to_write.iloc[-1]
+                    INDICATOR_CACHE[tf][sym] = {
+                        str(k): v for k, v in last_row.to_dict().items()
+                    }
+
+        except Exception as e:
+            logger.warning(f"[{tf}] Gap fill failed for {sym}: {e}")
+
+    logger.info(f"[{tf}] Indicator gap fill complete.")
+
+
 # ── Main calculation cycle ────────────────────────────────────────────────────
 
 def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
@@ -749,7 +884,12 @@ def poll_and_process() -> None:
         sys.exit(1)
     logger.info(f"Loaded {len(symbols)} symbols.")
 
-    # Initial run on startup for all cached timeframes
+    # Step 1: Fill any indicator gaps from previous downtime (all TFs)
+    logger.info("Checking for indicator gaps from previous downtime...")
+    for tf in INDICATOR_TIMEFRAMES:
+        fill_indicator_gaps(tf, symbols)
+
+    # Step 2: Initial full cycle for cache-priority timeframes
     logger.info("Running initial indicator calculation on startup...")
     for tf in CACHE_TIMEFRAMES:
         run_indicator_cycle(tf, symbols)
@@ -829,6 +969,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
