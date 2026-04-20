@@ -657,14 +657,14 @@ def fill_indicator_gaps(tf: str, symbols: list[str]) -> None:
       - After the gap checker deletes stale indicator rows
       - Any time the engine detects missing indicator data
     """
-    logger.info(f"[{tf}] Checking for indicator gaps...")
+    logger.debug(f"[{tf}] Checking for indicator gaps...")
     gaps = _get_indicator_gaps(tf, symbols)
 
     if not gaps:
-        logger.info(f"[{tf}] No indicator gaps found.")
+        logger.debug(f"[{tf}] No indicator gaps found.")
         return
 
-    logger.info(f"[{tf}] Found {len(gaps)} symbols with indicator gaps — recalculating...")
+    logger.debug(f"[{tf}] Found {len(gaps)} symbols with indicator gaps — recalculating...")
     filled_count = 0
     filled_rows  = 0
 
@@ -788,7 +788,7 @@ def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
                 continue
             INDICATOR_CACHE[tf][sym] = {str(k): v for k, v in row.to_dict().items()}
             cache_updated += 1
-        logger.info(
+        logger.debug(
             f"[{tf}] Cache updated: {cache_updated} symbols."
         )
 
@@ -866,10 +866,10 @@ def poll_and_process() -> None:
     if not symbols:
         logger.critical("No coins in coins.json — run bootstrap first.")
         sys.exit(1)
-    logger.info(f"Loaded {len(symbols)} symbols.")
+    logger.debug(f"Loaded {len(symbols)} symbols.")
 
     # Step 1: Fill any indicator gaps from previous downtime (all TFs)
-    logger.info("Checking for indicator gaps from previous downtime...")
+    logger.debug("Checking for indicator gaps from previous downtime...")
     for tf in INDICATOR_TIMEFRAMES:
         fill_indicator_gaps(tf, symbols)
 
@@ -880,7 +880,7 @@ def poll_and_process() -> None:
         if INDICATOR_CACHE[tf]:
             run_bots_for_timeframe(tf)
 
-    logger.info("Polling candle_close_events every 10s...")
+    logger.debug("Polling candle_close_events every 10s...")
     shutdown = ShutdownHandler("INDICATOR")
 
     while not shutdown.is_set():
@@ -980,6 +980,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
