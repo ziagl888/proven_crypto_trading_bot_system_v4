@@ -68,11 +68,14 @@ POLL_EVERY   = 10      # seconds between REST calls
 MAX_HISTORY  = 1440    # 10s buckets = 4 hours of history per symbol
 
 # Price move thresholds: (lookback_seconds, min_pct_change, label)
+# Aligned with V3 — higher thresholds prevent noise from normal volatility
 PRICE_THRESHOLDS = [
-    (60,   2.0,  "1min"),
     (120,  3.0,  "2min"),
+    (180,  4.0,  "3min"),
     (300,  5.0,  "5min"),
-    (600,  8.0,  "10min"),
+    (420,  7.5,  "7min"),
+    (600, 10.0,  "10min"),
+    (3600, 20.0, "1h"),
 ]
 
 # Volume thresholds: (multiplier, label, extended_cooldown)
