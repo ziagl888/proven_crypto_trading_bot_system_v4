@@ -44,7 +44,7 @@ from psycopg2 import extras
 
 from core.bootstrap import load_coins
 from core.config import BASE_URL, INGEST_TIMEFRAMES, NUM_WORKERS
-from core.database import get_db_connection
+from core.database import db_connection, get_db_connection
 from core.schema import verify_schema
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -838,6 +838,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
