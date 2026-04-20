@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import logging.handlers
 import os
 import sys
 import time
@@ -66,62 +67,17 @@ os.makedirs(_LOG_DIR, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - INDICATOR - %(levelname)s - %(message)s",
-    force=True,   # override any existing root logger config
+    force=True,
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(
+        logging.handlers.RotatingFileHandler(
             os.path.join(_LOG_DIR, "indicator_engine.log"),
+            maxBytes=10 * 1024 * 1024,   # 10 MB per file
+            backupCount=5,                # keep 5 backups → max 50 MB
             encoding="utf-8",
         ),
     ],
-)
-logger = logging.getLogger(__name__)
-
-# ── Cache ─────────────────────────────────────────────────────────────────────
-# INDICATOR_CACHE[timeframe][symbol] = {column: value, ...}
-# Read by bot threads — written only by the indicator engine main thread.
-# Python dicts are thread-safe for read/write of individual keys (GIL).
-INDICATOR_CACHE: dict[str, dict[str, dict[str, Any]]] = {
-    tf: {} for tf in INDICATOR_TIMEFRAMES
-}
-
-# Tracks last processed closed_at per timeframe to avoid double-processing
-_LAST_PROCESSED: dict[str, datetime.datetime] = {}
-
-# Tracks which timeframes currently have an active cycle running.
-# Prevents spawning multiple parallel cycles for the same TF.
-_RUNNING_TFS: set[str] = set()
-_RUNNING_TFS_LOCK = threading.Lock()
-
-# Global semaphore: max 2 concurrent cycles across ALL timeframes.
-# Each cycle spawns NUM_WORKERS=16 threads doing CPU-bound pandas work.
-# 4 simultaneous cycles = 64 threads fighting for the GIL → 160s instead of 30s.
-# 2 simultaneous cycles = 32 threads → ~2×30s = 60s total.
-_CYCLE_SEMAPHORE = threading.Semaphore(2)
-
-# Cache-priority timeframes (loaded into INDICATOR_CACHE)
-CACHE_TIMEFRAMES = {"1h", "30m"}
-
-# ── Schema check ──────────────────────────────────────────────────────────────
-
-def check_schema() -> None:
-    result = verify_schema()
-    if result["missing"]:
-        logger.critical(f"Missing DB tables: {result['missing']}. Run bootstrap first.")
-        sys.exit(1)
-    logger.info(f"Schema OK — {len(result['ok'])} tables verified.")
-
-
-# ── Indicator math ────────────────────────────────────────────────────────────
-
-def _rsi(series: pd.Series, period: int) -> pd.Series:
-    """Wilder's RSI — uses com=period-1 (alpha=1/period), not span."""
-    delta = series.diff()
-    up    = delta.clip(lower=0)
-    down  = -delta.clip(upper=0)
-    # Wilder's smoothing: alpha = 1/period → com = period - 1
-    rs    = up.ewm(com=period - 1, adjust=False).mean() /             down.ewm(com=period - 1, adjust=False).mean()
-    return (100.0 - 100.0 / (1.0 + rs)).fillna(50)
+).fillna(50)
 
 
 def _wma(series: pd.Series, period: int) -> pd.Series:
@@ -1024,6 +980,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 

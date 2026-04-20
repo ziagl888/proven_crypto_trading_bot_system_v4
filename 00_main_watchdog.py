@@ -17,6 +17,7 @@ import os
 import sys
 import time
 import logging
+import logging.handlers
 import signal
 import subprocess
 import threading
@@ -25,12 +26,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_LOG_DIR     = os.path.join(_SCRIPT_DIR, "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - WATCHDOG - %(levelname)s - %(message)s",
+    force=True,
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("watchdog.log", encoding="utf-8"),
+        logging.handlers.RotatingFileHandler(
+            os.path.join(_LOG_DIR, "watchdog.log"),
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+        ),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -229,6 +240,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 

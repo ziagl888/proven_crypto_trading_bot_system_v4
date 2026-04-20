@@ -29,6 +29,7 @@ import asyncio
 import datetime
 import json
 import logging
+import logging.handlers
 import os
 import random
 import socket
@@ -57,8 +58,10 @@ logging.basicConfig(
     force=True,
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(
+        logging.handlers.RotatingFileHandler(
             os.path.join(_LOG_DIR, "ingestion.log"),
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
             encoding="utf-8",
         ),
     ],
@@ -838,6 +841,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
