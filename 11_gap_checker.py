@@ -50,6 +50,12 @@ BASE_URL     = "https://fapi.binance.com"
 REST_WORKERS = 3
 REST_LIMIT   = 1500   # max candles per Binance klines request
 
+# Binance Futures REST weight limit: 2400/min = 40/sec
+# Each klines request costs 2 weight → max 20 req/sec
+# With 3 workers we target ~5 req/sec per worker = safe margin
+REST_INTER_REQUEST_SLEEP = 0.25   # 250ms between requests per worker
+REST_WORKER_STAGGER      = 1.0    # seconds between worker starts
+
 # Run at these minutes past the hour
 RUN_MINUTES = {20, 50}
 
@@ -61,8 +67,24 @@ _TF_SECONDS: dict[str, int] = {
     "1d":  86400,"3d":  259200,"1w":  604800, "1M": 2592000,
 }
 
-# Max gap tolerance per TF (in candles) — 1 missing candle is always a gap
-_GAP_TOLERANCE = 1
+# Gap tolerance per timeframe — small gaps on 5m/15m for illiquid coins
+# are often real (no trades in that period) rather than ingestion failures.
+# We only treat it as a gap if more than this many candles are missing.
+_GAP_TOLERANCE: dict[str, int] = {
+    "5m":  2,    # illiquid coins often have genuine 5m gaps
+    "15m": 2,
+    "30m": 1,
+    "1h":  1,
+    "2h":  1,
+    "4h":  1,
+    "6h":  1,
+    "8h":  1,
+    "12h": 1,
+    "1d":  1,
+    "3d":  1,
+    "1w":  1,
+    "1M":  1,
+}
 
 
 # ── REST helpers ──────────────────────────────────────────────────────────────
@@ -111,7 +133,7 @@ def _fetch_klines(
             curr = data[-1][6] + 1
             if len(data) < REST_LIMIT:
                 break
-            time.sleep(0.08)
+            time.sleep(REST_INTER_REQUEST_SLEEP)
         except Exception as e:
             logger.warning(f"REST error {symbol}/{tf}: {e}")
             time.sleep(5)
@@ -175,7 +197,8 @@ def _find_ohlcv_gaps(
                 (max_ot - min_ot).total_seconds() / tf_sec
             ) + 1
 
-            if expected - count <= _GAP_TOLERANCE:
+            tolerance = _GAP_TOLERANCE.get(tf, 1)
+            if expected - count <= tolerance:
                 return []  # No significant gaps
 
             # Find the actual missing timestamps
@@ -332,8 +355,14 @@ def run_gap_check() -> None:
     total_ind    = 0
     symbols_with_gaps = []
 
+    # Stagger symbol submission to avoid burst rate limiting
+    import itertools
     with ThreadPoolExecutor(max_workers=REST_WORKERS) as pool:
-        futures = {pool.submit(_check_and_fill_symbol, sym): sym for sym in symbols}
+        futures = {}
+        for i, sym in enumerate(symbols):
+            if i > 0 and i % REST_WORKERS == 0:
+                time.sleep(REST_WORKER_STAGGER)
+            futures[pool.submit(_check_and_fill_symbol, sym)] = sym
         for future in as_completed(futures):
             result = future.result()
             if result["gaps_found"] > 0:
@@ -407,3 +436,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
