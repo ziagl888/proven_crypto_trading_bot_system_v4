@@ -97,11 +97,13 @@ def generate_chart(
     Returns:
         path to the PNG file, or None on failure.
     """
+    logger.info(f"Generating chart for {symbol} ({minutes}min)...")
     with _CHART_LOCK:
         # Try requested window, fall back to shorter windows if not enough data
         for try_minutes in [minutes, 120, 60, 30]:
             path = _generate_locked(symbol, try_minutes, spike_start, spike_end)
             if path:
+                logger.info(f"Chart generated: {path}")
                 return path
         logger.warning(f"No chart data available for {symbol} — alert sent without image")
         return None
@@ -289,7 +291,7 @@ def _generate_locked(
         return chart_path
 
     except Exception as e:
-        logger.error(f"Chart generation error for {symbol}: {e}")
+        logger.error(f"Chart generation error for {symbol}: {e}", exc_info=True)
         return None
 
     finally:
