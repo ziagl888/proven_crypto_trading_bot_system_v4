@@ -57,6 +57,103 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
+# ── Bot name normalization ────────────────────────────────────────────────────
+# Maps ALL known V3 bot name variants → unified V4 names.
+# Rules:
+#   - Lowercase timeframes (8H → 8h)
+#   - Hyphen as separator
+#   - pump/dump suffix dropped (direction is in the direction column)
+#   - MSI1 typo corrected to MIS-1
+#   - ATS1_Robust → ATS-1
+#   - SRA1 + "Support Resistance" → SR-1
+
+_BOT_NAME_MAP: dict[str, str] = {
+    # ── Classical channel bots ────────────────────────────────────────────────
+    "Fast In And Out":   "FIO-1",
+    "Volume Indicator":  "VOL-1",
+    "5 Percent":         "PCT-5",
+    "Support Resistance":"SR-1",
+    "Main Channel":      "MAIN-1",
+
+    # ── MIS variants (correct + typo MSI1) ───────────────────────────────────
+    "MIS1-8H":           "MIS-1-8h",
+    "MIS1-8h":           "MIS-1-8h",
+    "MIS1-8h_pump":      "MIS-1-8h",
+    "MIS1-8h_dump":      "MIS-1-8h",
+    "MSI1-8h_pump":      "MIS-1-8h",
+    "MSI1-8h_dump":      "MIS-1-8h",
+
+    "MIS1-24H":          "MIS-1-24h",
+    "MIS1-24h":          "MIS-1-24h",
+    "MIS1-24h_pump":     "MIS-1-24h",
+    "MIS1-24h_dump":     "MIS-1-24h",
+    "MSI1-24h_pump":     "MIS-1-24h",
+    "MSI1-24h_dump":     "MIS-1-24h",
+
+    "MIS1-72H":          "MIS-1-72h",
+    "MIS1-72h":          "MIS-1-72h",
+    "MIS1-72h_pump":     "MIS-1-72h",
+    "MIS1-72h_dump":     "MIS-1-72h",
+    "MSI1-72h_pump":     "MIS-1-72h",
+    "MSI1-72h_dump":     "MIS-1-72h",
+
+    "MIS1-168H":         "MIS-1-168h",
+    "MIS1-168h":         "MIS-1-168h",
+    "MIS1-168h_pump":    "MIS-1-168h",
+    "MIS1-168h_dump":    "MIS-1-168h",
+    "MSI1-168h_pump":    "MIS-1-168h",
+    "MSI1-168h_dump":    "MIS-1-168h",
+
+    # ── Breakout ──────────────────────────────────────────────────────────────
+    "BR1H":  "BR-1h",
+    "BR2H":  "BR-2h",
+    "BR4H":  "BR-4h",
+    "BR1D":  "BR-1d",
+
+    # ── Breaker Block ─────────────────────────────────────────────────────────
+    "BB_1H": "BB-1h",
+    "BB_4H": "BB-4h",
+
+    # ── Quasimodo ─────────────────────────────────────────────────────────────
+    "QM_1H": "QM-1h",
+    "QM_4H": "QM-4h",
+
+    # ── Three Drive ───────────────────────────────────────────────────────────
+    "TD_1H": "TD-1h",
+    "TD_4H": "TD-4h",
+
+    # ── AI bots ───────────────────────────────────────────────────────────────
+    "ATS1":         "ATS-1",
+    "ATS1_Robust":  "ATS-1",
+    "ATB1":         "ATB-1",
+    "AIM1":         "AIM-1",
+    "ABR1":         "ABR-1",
+    "RUB1":         "RUB-1",
+    "SRA1":         "SR-1",
+    "EPD1":         "EPD-1",
+    "UFI1":         "UFI-1",
+    "ROM1":         "ROM-1",
+
+    # ── SMC variants ─────────────────────────────────────────────────────────
+    "SMC_15M": "SMC-1",
+    "SMC_30M": "SMC-1",
+    "SMC_4H":  "SMC-1",
+}
+
+
+def _normalize_bot_name(v3_name: str) -> str:
+    """
+    Returns the unified V4 bot name for a given V3 name.
+    Falls back to the original name (uppercased, stripped) if not in map.
+    """
+    name = str(v3_name).strip()
+    if name in _BOT_NAME_MAP:
+        return _BOT_NAME_MAP[name]
+    # Fallback: return as-is but log warning
+    logger.warning(f"Unknown bot name '{name}' — keeping as-is. Add to _BOT_NAME_MAP.")
+    return name
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _table_exists(conn, table: str) -> bool:
@@ -222,7 +319,7 @@ def migrate_active_trades_master(conn, dry_run: bool) -> int:
         if dry_run:
             logger.info(
                 f"  [DRY] active_trades_master id={v3_id} "
-                f"{coin} {direction} {strategy} → {v4_status}"
+                f"{coin} {direction} {_normalize_bot_name(strategy)} → {v4_status}"
             )
             migrated += 1
             continue
@@ -243,7 +340,7 @@ def migrate_active_trades_master(conn, dry_run: bool) -> int:
                 ) RETURNING id
                 """,
                 (
-                    strategy, coin, direction,
+                    _normalize_bot_name(strategy), coin, direction,
                     float(entry or 0),
                     float(tp1) if tp1 and float(tp1) > 0 else None,
                     float(tp2) if tp2 and float(tp2) > 0 else None,
@@ -313,7 +410,7 @@ def migrate_closed_trades_master(conn, dry_run: bool) -> int:
         if dry_run:
             logger.info(
                 f"  [DRY] closed_trades_master id={v3_id} "
-                f"{coin} {direction} {strategy} → {v4_status} pnl_r={pnl_r}"
+                f"{coin} {direction} {_normalize_bot_name(strategy)} → {v4_status} pnl_r={pnl_r}"
             )
             migrated += 1
             continue
@@ -336,7 +433,7 @@ def migrate_closed_trades_master(conn, dry_run: bool) -> int:
                 ) RETURNING id
                 """,
                 (
-                    strategy, coin, direction,
+                    _normalize_bot_name(strategy), coin, direction,
                     entry_f,
                     float(tp1) if tp1 and float(tp1) > 0 else None,
                     float(tp2) if tp2 and float(tp2) > 0 else None,
@@ -416,7 +513,7 @@ def migrate_ai_signals(conn, dry_run: bool) -> int:
         if dry_run:
             logger.info(
                 f"  [DRY] ai_signals id={v3_id} "
-                f"{symbol} {direction} {model} tp_hit={tp_hit}"
+                f"{symbol} {direction} {_normalize_bot_name(model)} tp_hit={tp_hit}"
             )
             migrated += 1
             continue
@@ -439,7 +536,7 @@ def migrate_ai_signals(conn, dry_run: bool) -> int:
                 ) RETURNING id
                 """,
                 (
-                    model or "AI_UNKNOWN", symbol, direction,
+                    _normalize_bot_name(model or "AI_UNKNOWN"), symbol, direction,
                     entry_f,
                     tps[0] if len(tps) > 0 else None,
                     tps[1] if len(tps) > 1 else None,
@@ -505,7 +602,7 @@ def migrate_closed_ai_signals(conn, dry_run: bool) -> int:
         if dry_run:
             logger.info(
                 f"  [DRY] closed_ai_signals id={v3_id} "
-                f"{symbol} {direction} {model} → {v4_status} "
+                f"{symbol} {direction} {_normalize_bot_name(model)} → {v4_status} "
                 f"reason='{close_reason}'"
             )
             migrated += 1
@@ -531,7 +628,7 @@ def migrate_closed_ai_signals(conn, dry_run: bool) -> int:
                 ) RETURNING id
                 """,
                 (
-                    model or "AI_UNKNOWN", symbol, direction,
+                    _normalize_bot_name(model or "AI_UNKNOWN"), symbol, direction,
                     entry_f,
                     tp_hit, tp_hit,   # tp_count, tp_hit
                     model,
@@ -641,4 +738,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
