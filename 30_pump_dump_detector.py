@@ -285,11 +285,12 @@ def _check_round_levels(symbol: str, current_price: float,
     direction     = "upwards" if current_price > prev_price else "downwards"
     crossed_level = curr_bucket * step if direction == "upwards" else prev_bucket * step
 
-    # Cooldown check
+    # Cooldown check — suppress if ANY level was crossed recently for this symbol
+    # This prevents flip-flopping alerts when price hovers around a round level
     state = _ROUND_STATE.get(symbol, {})
     now   = datetime.datetime.now(datetime.timezone.utc)
     last  = state.get("last_time", datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc))
-    if state.get("last_level") == crossed_level and (now - last).total_seconds() < ROUND_LEVEL_COOLDOWN_S:
+    if (now - last).total_seconds() < ROUND_LEVEL_COOLDOWN_S:
         return
 
     emoji = "🚀" if direction == "upwards" else "💥"
@@ -302,7 +303,8 @@ def _check_round_levels(symbol: str, current_price: float,
         f"</pre>"
     )
 
-    _send_outbox(PUMP_DUMP_MARKET_CHANNEL_ID, msg)
+    chart_path = generate_chart(symbol, minutes=240)
+    _send_outbox(PUMP_DUMP_MARKET_CHANNEL_ID, msg, chart_path)
     logger.info(f"ROUND LEVEL: {symbol} crossed {crossed_level} {direction}")
 
     _ROUND_STATE[symbol] = {"last_level": crossed_level, "last_time": now}
