@@ -58,6 +58,7 @@ from core.config import (
 )
 from core.database import db_connection
 from core.schema import verify_schema
+from core.charting import generate_chart
 from core.shutdown import ShutdownHandler
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -605,3 +606,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Pump/Dump Detector stopped (Ctrl+C).")
+
