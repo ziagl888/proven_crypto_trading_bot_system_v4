@@ -78,6 +78,11 @@ INDICATOR_CACHE: dict[str, dict[str, dict[str, Any]]] = {
 # Tracks last processed closed_at per timeframe to avoid double-processing
 _LAST_PROCESSED: dict[str, datetime.datetime] = {}
 
+# Tracks which timeframes currently have an active cycle running.
+# Prevents spawning multiple parallel cycles for the same TF.
+_RUNNING_TFS: set[str] = set()
+_RUNNING_TFS_LOCK = threading.Lock()
+
 # Cache-priority timeframes (loaded into INDICATOR_CACHE)
 CACHE_TIMEFRAMES = {"1h", "30m"}
 
@@ -906,12 +911,19 @@ def poll_and_process() -> None:
 
                 logger.info(f"New candle close detected: {tf} at {closed_at}")
 
+                # Skip if a cycle is already running for this TF —
+                # prevents spawning parallel cycles when poll interval < cycle duration.
+                with _RUNNING_TFS_LOCK:
+                    if tf in _RUNNING_TFS:
+                        logger.debug(f"[{tf}] Cycle already running — skipping poll.")
+                        continue
+                    _RUNNING_TFS.add(tf)
+
                 # Refresh coin list periodically (housekeeping updates it)
                 fresh_symbols = load_coins() or symbols
 
                 # Run calculation in a thread so we can process multiple TFs.
-                # _LAST_PROCESSED is set inside the thread AFTER success —
-                # if the cycle fails, the next poll will retry.
+                # _LAST_PROCESSED is set inside the thread AFTER success.
                 t = threading.Thread(
                     target=_run_cycle_and_bots,
                     args=(tf, fresh_symbols, closed_at),
@@ -929,8 +941,9 @@ def poll_and_process() -> None:
 def _run_cycle_and_bots(tf: str, symbols: list[str], closed_at: datetime.datetime) -> None:
     """
     Runs indicator cycle then bot runner for a timeframe.
-    Only marks _LAST_PROCESSED after a successful cycle — if the cycle
-    fails, the next poll will detect the same closed_at and retry.
+    Always removes tf from _RUNNING_TFS when done so the next
+    candle close can trigger a new cycle.
+    Only marks _LAST_PROCESSED after success — failed cycles retry on next poll.
     """
     try:
         run_indicator_cycle(tf, symbols)
@@ -939,6 +952,9 @@ def _run_cycle_and_bots(tf: str, symbols: list[str], closed_at: datetime.datetim
     except Exception as e:
         logger.error(f"[{tf}] Cycle+bots error: {e}")
         # Do NOT update _LAST_PROCESSED — will retry on next poll
+    finally:
+        with _RUNNING_TFS_LOCK:
+            _RUNNING_TFS.discard(tf)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -954,6 +970,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
