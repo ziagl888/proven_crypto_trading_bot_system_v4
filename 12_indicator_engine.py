@@ -548,6 +548,7 @@ def _write_indicators_batch(tf: str, results: list[pd.DataFrame]) -> int:
     """
     if not results:
         return 0
+    t0 = time.time()
 
     combined = pd.concat(results, ignore_index=True)
 
@@ -585,6 +586,12 @@ def _write_indicators_batch(tf: str, results: list[pd.DataFrame]) -> int:
             extras.execute_values(cur, sql, rows, page_size=500)
         conn.commit()
 
+    elapsed = time.time() - t0
+    if elapsed > 5.0:
+        logger.warning(
+            f"[{tf}] DB write took {elapsed:.1f}s for {len(rows)} rows — "
+            f"consider BRIN index or TimescaleDB for better write performance."
+        )
     return len(rows)
 
 
@@ -922,14 +929,18 @@ def poll_and_process() -> None:
                 if last and closed_at <= last:
                     continue  # Already processed this close
 
-                logger.info(f"New candle close detected: {tf} at {closed_at}")
-
-                # Skip if a cycle is already running for this TF
+                # Skip silently if a cycle is already running — avoids
+                # log spam when a cycle takes longer than the 10s poll interval.
                 with _RUNNING_TFS_LOCK:
                     if tf in _RUNNING_TFS:
-                        logger.debug(f"[{tf}] Cycle already running — skipping poll.")
+                        logger.debug(
+                            f"[{tf}] Cycle running — skip "
+                            f"closed_at={closed_at.strftime('%H:%M:%S')}"
+                        )
                         continue
                     _RUNNING_TFS.add(tf)
+
+                logger.info(f"New candle close detected: {tf} at {closed_at}")
 
                 fresh_symbols = load_coins() or symbols
 
@@ -989,6 +1000,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
