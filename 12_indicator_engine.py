@@ -28,7 +28,7 @@ import os
 import sys
 import time
 import threading
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import numpy as np
@@ -576,8 +576,10 @@ def _write_indicators_batch(tf: str, results: list[pd.DataFrame]) -> int:
 # ── Per-symbol calculation workers ───────────────────────────────────────────
 
 def _calc_symbol(args: tuple[str, pd.DataFrame, str]) -> pd.DataFrame | None:
-    """Single-symbol worker — kept for compatibility."""
-    warnings.filterwarnings("ignore")
+    """
+    Worker function for ThreadPoolExecutor.
+    Calculates indicators for one symbol, returns latest row only.
+    """
     symbol, df_sym, tf = args
     try:
         if len(df_sym) < 50:
@@ -588,29 +590,6 @@ def _calc_symbol(args: tuple[str, pd.DataFrame, str]) -> pd.DataFrame | None:
         return None
 
 
-def _calc_symbol_batch(
-    args_list: list[tuple[str, pd.DataFrame, str]]
-) -> list[pd.DataFrame]:
-    """
-    Batch worker for ProcessPoolExecutor.
-    Processes multiple symbols in one worker process — reduces pickle/IPC
-    overhead compared to one future per symbol.
-    Returns list of single-row DataFrames (latest indicator row per symbol).
-    """
-    warnings.filterwarnings("ignore")
-
-    results = []
-    for symbol, df_sym, tf in args_list:
-        try:
-            if len(df_sym) < 50:
-                continue
-            row = calculate_indicators(df_sym, tf).tail(1)
-            if not row.empty:
-                results.append(row)
-        except Exception as e:
-            # Log but continue — one bad symbol shouldn't abort the batch
-            logger.warning(f"Indicator calc failed {symbol}/{tf}: {e}")
-    return results
 
 
 # ── Indicator gap fill ───────────────────────────────────────────────────────
@@ -754,7 +733,7 @@ def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
     """
     Full indicator calculation cycle for one timeframe:
       1. Batch-load OHLCV for all symbols (1 DB query)
-      2. Calculate indicators in parallel (ProcessPoolExecutor)
+      2. Calculate indicators in parallel (ThreadPoolExecutor)
       3. Batch-write to indicators_{tf} (1 DB upsert)
       4. Update INDICATOR_CACHE for priority timeframes
     """
@@ -780,18 +759,16 @@ def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
         if sym in sym_groups
     ]
 
-    # Chunk args into NUM_WORKERS batches to reduce pickle/IPC overhead.
-    # Fewer, larger tasks are faster than 500 tiny tasks in a ProcessPool.
-    chunk_size = max(1, len(args_list) // (NUM_WORKERS * 4))
-    chunks = [args_list[i:i + chunk_size] for i in range(0, len(args_list), chunk_size)]
-
+    # Use ThreadPoolExecutor — avoids ProcessPool spawn issues on Windows
+    # (Python 3.14 + WMI bug) and eliminates pickle/IPC overhead entirely.
+    # pandas/numpy release the GIL during computation so threads are effective.
     results: list[pd.DataFrame] = []
-    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as pool:
-        futures = {pool.submit(_calc_symbol_batch, chunk): i for i, chunk in enumerate(chunks)}
+    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
+        futures = {pool.submit(_calc_symbol, args): args[0] for args in args_list}
         for future in as_completed(futures):
-            batch_results = future.result()
-            if batch_results:
-                results.extend(batch_results)
+            result = future.result()
+            if result is not None:
+                results.append(result)
 
     if not results:
         logger.warning(f"[{tf}] No indicator results produced.")
@@ -977,6 +954,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
