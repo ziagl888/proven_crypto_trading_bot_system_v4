@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 from core.config import (
     PUMP_DUMP_MARKET_CHANNEL_ID,
-    PUMP_DUMP_SENTIMENT_CHANNEL_ID,
+    SENTIMENT_CHANNEL_ID,
 )
 from core.database import db_connection
 from core.schema import verify_schema
@@ -606,4 +606,5 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Pump/Dump Detector stopped (Ctrl+C).")
+
 
