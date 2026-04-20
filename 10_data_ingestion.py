@@ -217,39 +217,66 @@ def _fetch_klines_rest(
 
 # ── Initial backfill ──────────────────────────────────────────────────────────
 
-def _backfill_symbol(symbol: str, force: bool = False) -> None:
+# Timeframe duration in minutes — used to detect restart gaps
+_TF_MINUTES: dict[str, int] = {
+    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+    "1h": 60, "2h": 120, "4h": 240, "6h": 360,
+    "8h": 480, "12h": 720, "1d": 1440,
+    "3d": 4320, "1w": 10080, "1M": 43200,
+}
+
+
+def _backfill_symbol(symbol: str) -> dict:
     """
     Backfills all INGEST_TIMEFRAMES for one symbol.
-    Skips a timeframe if data already exists (unless force=True).
+
+    Strategy (runs on EVERY startup, not just first run):
+    - No data exists  → full historical backfill (BACKFILL_DAYS depth)
+    - Data exists     → fill from last known candle to NOW (restart gap)
+
+    This guarantees that any downtime gaps are closed immediately
+    before the indicator engine starts calculating.
     """
     conn    = get_db_connection()
     session = requests.Session()
     session.headers.update({"User-Agent": "CryptoBotV4/1.0"})
-    now_ms  = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+    now     = datetime.datetime.now(datetime.timezone.utc)
+    now_ms  = int(now.timestamp() * 1000)
+    filled  = 0
 
     try:
         for tf in INGEST_TIMEFRAMES:
             latest = _get_latest_open_time(conn, symbol, tf)
 
-            if latest and not force:
-                # Already has data — skip initial backfill for this TF
-                continue
-
-            days = BACKFILL_DAYS.get(tf, 0)
-            if days > 0:
-                start_dt = datetime.datetime.now(datetime.timezone.utc) - \
-                           datetime.timedelta(days=days)
+            if latest is None:
+                # No data at all — full historical backfill
+                days = BACKFILL_DAYS.get(tf, 0)
+                if days > 0:
+                    start_dt = now - datetime.timedelta(days=days)
+                else:
+                    start_dt = now - datetime.timedelta(days=3650)
             else:
-                # Maximum available — go back 10 years (Binance will cap it)
-                start_dt = datetime.datetime.now(datetime.timezone.utc) - \
-                           datetime.timedelta(days=3650)
+                # Data exists — check for restart gap
+                if latest.tzinfo is None:
+                    latest = latest.replace(tzinfo=datetime.timezone.utc)
+                tf_min    = _TF_MINUTES.get(tf, 60)
+                gap_min   = (now - latest).total_seconds() / 60
+                # Less than 2 candle periods behind — no gap, skip
+                if gap_min < tf_min * 2:
+                    continue
+                # Fill from last known candle (1 period overlap for safety)
+                start_dt = latest - datetime.timedelta(minutes=tf_min)
 
             start_ms = int(start_dt.timestamp() * 1000)
             rows = _fetch_klines_rest(session, symbol, tf, start_ms, now_ms)
 
             if rows:
                 _upsert_candles(conn, {tf: rows})
-                logger.debug(f"  Backfill {symbol}/{tf}: {len(rows)} candles")
+                filled += len(rows)
+                logger.debug(
+                    f"  Backfill {symbol}/{tf}: {len(rows)} candles "
+                    f"from {start_dt.strftime('%Y-%m-%d %H:%M')}"
+                )
 
     except Exception as e:
         logger.error(f"Backfill error {symbol}: {e}")
@@ -257,39 +284,32 @@ def _backfill_symbol(symbol: str, force: bool = False) -> None:
         conn.close()
         session.close()
 
+    return {"symbol": symbol, "filled": filled}
+
 
 def run_initial_backfill(symbols: list[str]) -> None:
     """
-    Runs initial backfill for all symbols in parallel.
-    Only fills timeframes that have NO data yet.
+    Runs backfill for ALL symbols on every startup.
+
+    Always checks for restart gaps regardless of whether data exists.
+    Only sets initial_backfill_done after all gaps are filled so the
+    indicator engine starts on complete, up-to-date data.
     """
-    logger.info(f"Initial backfill: checking {len(symbols)} symbols...")
-
-    # Find symbols that actually need backfilling
-    conn = get_db_connection()
-    needs_fill = []
-    try:
-        for sym in symbols:
-            # Check just 5m — if it has data we consider the symbol done
-            latest = _get_latest_open_time(conn, sym, "5m")
-            if latest is None:
-                needs_fill.append(sym)
-    finally:
-        conn.close()
-
-    if not needs_fill:
-        logger.info("Initial backfill: all symbols already have data — skipped.")
-        return
-
-    logger.info(
-        f"Initial backfill: {len(needs_fill)} symbols need data "
-        f"({len(symbols) - len(needs_fill)} already filled)."
-    )
+    logger.info(f"Initial backfill: checking {len(symbols)} symbols for gaps...")
 
     with ThreadPoolExecutor(max_workers=REST_WORKERS) as pool:
-        list(pool.map(_backfill_symbol, needs_fill))
+        results = list(pool.map(_backfill_symbol, symbols))
 
-    logger.info("Initial backfill complete.")
+    total_filled   = sum(r["filled"] for r in results)
+    symbols_filled = sum(1 for r in results if r["filled"] > 0)
+
+    if total_filled == 0:
+        logger.info("Initial backfill: all symbols up to date — no gaps found.")
+    else:
+        logger.info(
+            f"Initial backfill complete: {symbols_filled} symbols had gaps, "
+            f"{total_filled} candles filled."
+        )
 
 
 # ── Gap checker ───────────────────────────────────────────────────────────────
@@ -759,6 +779,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
