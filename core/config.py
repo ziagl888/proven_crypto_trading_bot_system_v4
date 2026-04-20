@@ -54,44 +54,61 @@ NUM_WORKERS = _int("NUM_WORKERS", 16)
 # ── Telegram ──────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = _required("TELEGRAM_BOT_TOKEN")
 
-# Strategy signal channels (Cornix listens here)
-TELEGRAM_CHANNELS = {
-    "Fast In And Out":   _int("TELEGRAM_CHANNEL_FAST_IN_OUT", -1002928960725),
-    "5 Percent":         _int("TELEGRAM_CHANNEL_5_PERCENT",   -1002528903317),
-    "Main Channel":      _int("TELEGRAM_CHANNEL_MAIN",        -1002214219814),
-    "Support Resistance":_int("TELEGRAM_CHANNEL_SR",          -1002767867624),
-    "Volume Indicator":  _int("TELEGRAM_CHANNEL_VOLUME",      -1002995492163),
-    "Pattern Detector":  _int("TELEGRAM_CHANNEL_PATTERN",     -1003808675239),
-}
+# ── Telegram Channels ────────────────────────────────────────────────────────
+# Market monitoring (PD-1 Pump/Dump Detector)
+PUMP_DUMP_MARKET_CHANNEL_ID = _int("PUMP_DUMP_MARKET_CHANNEL_ID", 0)
+PUMP_DUMP_AI_CHANNEL_ID     = _int("PUMP_DUMP_AI_CHANNEL_ID",     0)
+
+# Market Tracker (hourly reports, gainers/losers, volume)
+SENTIMENT_CHANNEL_ID        = _int("SENTIMENT_CHANNEL_ID",        0)
 
 # Regime Orchestrator
-REGIME_TRADING_CHANNEL_ID = _int("REGIME_TRADING_CHANNEL_ID", -1003963430969)
-REGIME_STATUS_CHANNEL_ID  = _int("REGIME_STATUS_CHANNEL_ID",  -1003726330371)
+REGIME_TRADING_CHANNEL_ID   = _int("REGIME_TRADING_CHANNEL_ID",   0)
+REGIME_STATUS_CHANNEL_ID    = _int("REGIME_STATUS_CHANNEL_ID",    0)
 
-# Individual bot channels
-UFI1_CHANNEL_ID           = _int("UFI1_CHANNEL_ID",           -1003886743032)
-AI_MASTER_CHANNEL_ID      = _int("AI_MASTER_CHANNEL_ID",      -1003489268014)
-ATS_CHANNEL_ID            = _int("ATS_CHANNEL_ID",            -1003893440623)
-RUBBERBAND_CHANNEL_ID     = _int("RUBBERBAND_CHANNEL_ID",     -1003839488401)
-ATB_CHANNEL_ID            = _int("ATB_CHANNEL_ID",            -1003550392848)
-ATB_INFO_CHANNEL_ID       = _int("ATB_INFO_CHANNEL_ID",       -1003152405662)
-ABR1_CHANNEL_ID           = _int("ABR1_CHANNEL_ID",           -1003566031795)
-BTC_SMC_CHANNEL_ID        = _int("BTC_SMC_CHANNEL_ID",        -1003833266588)
-QUASIMODO_CHANNEL_ID      = _int("QUASIMODO_CHANNEL_ID",      -1003779126169)
-MAYANK_CHANNEL_ID         = _int("MAYANK_CHANNEL_ID",         -1003758733404)
-SMC_FOREX_XAUUSD_CHANNEL_ID = _int("SMC_FOREX_XAUUSD_CHANNEL_ID", -1003747323642)
-SMC_FOREX_XAGUSD_CHANNEL_ID = _int("SMC_FOREX_XAGUSD_CHANNEL_ID", -1003749698867)
+# Classical channel bots (FIO-1, VOL-1, PCT-5, SR-1, MAIN-1)
+FIO1_CHANNEL_ID   = _int("FIO1_CHANNEL_ID",   0)   # Fast In And Out
+VOL1_CHANNEL_ID   = _int("VOL1_CHANNEL_ID",   0)   # Volume Indicator
+PCT5_CHANNEL_ID   = _int("PCT5_CHANNEL_ID",   0)   # 5 Percent
+SR1_CHANNEL_ID    = _int("SR1_CHANNEL_ID",    0)   # Support Resistance
+MAIN1_CHANNEL_ID  = _int("MAIN1_CHANNEL_ID",  0)   # Main Channel
 
-PUMP_DUMP_MARKET_CHANNEL_ID    = _int("PUMP_DUMP_MARKET_CHANNEL_ID",    -1003530985261)
-PUMP_DUMP_AI_CHANNEL_ID        = _int("PUMP_DUMP_AI_CHANNEL_ID",        -1003025988001)
-PUMP_DUMP_MAIN_CHANNEL_ID      = _int("PUMP_DUMP_MAIN_CHANNEL_ID",      -1003205666153)
-SENTIMENT_CHANNEL_ID = _int("SENTIMENT_CHANNEL_ID", -1003726330371)
-
+# MIS bot channels — one per timeframe horizon
 MIS_CHANNELS = {
-    "1h":  _int("MIS_CHANNEL_1H",  -1003420431187),
-    "2h":  _int("MIS_CHANNEL_2H",  -1003420431187),
-    "4h":  _int("MIS_CHANNEL_4H",  -1003420431187),
-    "8h":  _int("MIS_CHANNEL_8H",  -1003420431187),
+    "8h":   _int("MIS_CHANNEL_8H",   0),
+    "24h":  _int("MIS_CHANNEL_24H",  0),
+    "72h":  _int("MIS_CHANNEL_72H",  0),
+    "168h": _int("MIS_CHANNEL_168H", 0),
+}
+
+# AI bots
+ATS1_CHANNEL_ID   = _int("ATS1_CHANNEL_ID",   0)   # ATS-1
+ATB1_CHANNEL_ID   = _int("ATB1_CHANNEL_ID",   0)   # ATB-1
+AIM1_CHANNEL_ID   = _int("AIM1_CHANNEL_ID",   0)   # AIM-1
+ABR1_CHANNEL_ID   = _int("ABR1_CHANNEL_ID",   0)   # ABR-1
+RUB1_CHANNEL_ID   = _int("RUB1_CHANNEL_ID",   0)   # RUB-1
+SRA1_CHANNEL_ID   = _int("SRA1_CHANNEL_ID",   0)   # SRA-1
+EPD1_CHANNEL_ID   = _int("EPD1_CHANNEL_ID",   0)   # EPD-1
+UFI1_CHANNEL_ID   = _int("UFI1_CHANNEL_ID",   0)   # UFI-1
+
+# Pattern / SMC bots
+BB_CHANNELS = {
+    "1h": _int("BB_CHANNEL_1H", 0),
+    "4h": _int("BB_CHANNEL_4H", 0),
+}
+BR_CHANNELS = {
+    "1h": _int("BR_CHANNEL_1H", 0),
+    "2h": _int("BR_CHANNEL_2H", 0),
+    "4h": _int("BR_CHANNEL_4H", 0),
+    "1d": _int("BR_CHANNEL_1D", 0),
+}
+QM_CHANNELS = {
+    "1h": _int("QM_CHANNEL_1H", 0),
+    "4h": _int("QM_CHANNEL_4H", 0),
+}
+TD_CHANNELS = {
+    "1h": _int("TD_CHANNEL_1H", 0),
+    "4h": _int("TD_CHANNEL_4H", 0),
 }
 
 # ── Coin filter ───────────────────────────────────────────────────────────────
@@ -108,5 +125,6 @@ MAIN_CHANNEL_COINS = [
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 DASHBOARD_PORT = _int("DASHBOARD_PORT", 5000)
+
 
 
