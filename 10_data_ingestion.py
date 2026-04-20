@@ -723,10 +723,10 @@ async def _candle_close_event_writer() -> None:
             try:
                 with conn.cursor() as cur:
                     for tf, count in snapshot.items():
-                        # Use actual candle close time — not NOW().
-                        # This ensures the indicator engine sees a stable
-                        # closed_at and does not trigger duplicate cycles
-                        # when the batch writer runs multiple times.
+                        # Use actual Binance candle close time (k["T"]).
+                        # Always update — the indicator engine deduplicates
+                        # via _LAST_PROCESSED[tf] which tracks the last
+                        # processed closed_at per timeframe.
                         close_ts = snapshot_times.get(tf) or datetime.datetime.now(datetime.timezone.utc)
                         cur.execute(
                             """
@@ -736,7 +736,6 @@ async def _candle_close_event_writer() -> None:
                             ON CONFLICT (timeframe) DO UPDATE SET
                                 closed_at    = EXCLUDED.closed_at,
                                 symbol_count = EXCLUDED.symbol_count
-                            WHERE candle_close_events.closed_at < EXCLUDED.closed_at
                             """,
                             (tf, close_ts, count),
                         )
@@ -869,6 +868,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
