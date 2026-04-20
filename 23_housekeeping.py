@@ -227,10 +227,12 @@ def main() -> None:
             f"{next_dt.strftime('%Y-%m-%d %H:%M UTC')} "
             f"(in {wait/3600:.1f}h)."
         )
-        shutdown.shutdown.sleep(wait)
+        if shutdown.sleep(wait):
+            break
         run_all_tasks()
 
 
 if __name__ == "__main__":
     main()
+
 
