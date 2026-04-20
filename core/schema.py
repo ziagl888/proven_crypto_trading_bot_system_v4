@@ -420,6 +420,20 @@ def _trade_tables_ddl() -> str:
             notes               TEXT,
             UNIQUE (source_table, source_id)
         );
+
+        -- Pump/Dump detector events (written by 30_pump_dump_detector.py)
+        CREATE TABLE IF NOT EXISTS pump_dump_events (
+            id               SERIAL PRIMARY KEY,
+            symbol           TEXT        NOT NULL,
+            detected_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            event_type       TEXT        NOT NULL,
+            price            NUMERIC,
+            price_change_pct NUMERIC,
+            volume_ratio     NUMERIC,
+            module           TEXT        NOT NULL DEFAULT 'PD-1'
+        );
+        CREATE INDEX IF NOT EXISTS idx_pde_symbol_time
+            ON pump_dump_events (symbol, detected_at DESC);
     """
 
 
@@ -609,6 +623,7 @@ def verify_schema() -> dict:
             "telegram_outbox", "trade_cooldowns", "candle_close_events",
             "system_state",
             "trades", "signal_log", "bot_performance", "v3_migration_log",
+            "pump_dump_events",
         ]
     )
     missing, ok = [], []
@@ -618,6 +633,7 @@ def verify_schema() -> dict:
                 cur.execute("SELECT to_regclass(%s)", (tname,))
                 (missing if cur.fetchone()[0] is None else ok).append(tname)
     return {"ok": ok, "missing": missing}
+
 
 
 
