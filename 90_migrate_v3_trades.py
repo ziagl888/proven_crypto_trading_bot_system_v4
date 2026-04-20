@@ -108,11 +108,8 @@ def _map_numeric_status(v3_status) -> tuple[str, str | None, int]:
     """
     s = str(v3_status).strip() if v3_status else ""
     if s in ("WORKING", ""):
-        # Empty status treated as OPEN only if we expect it from active table
-        # but empty string from closed table = CLOSED_MANUAL
-        if s == "WORKING":
-            return "OPEN", None, 0
-        return "CLOSED_MANUAL", None, 0
+        # Empty or WORKING = open trade
+        return "OPEN", None, 0
     if s == "0":
         return "CLOSED_SL", "LOSS", 0
     try:
@@ -644,3 +641,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
