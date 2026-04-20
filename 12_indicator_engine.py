@@ -77,7 +77,8 @@ logging.basicConfig(
             encoding="utf-8",
         ),
     ],
-).fillna(50)
+)
+logger = logging.getLogger(__name__)
 
 
 def _wma(series: pd.Series, period: int) -> pd.Series:
@@ -980,6 +981,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
