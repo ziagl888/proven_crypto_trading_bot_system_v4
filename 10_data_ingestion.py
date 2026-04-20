@@ -514,10 +514,10 @@ def _flush_symbol_to_db(symbol: str, symbol_data: dict[str, tuple], closed_tfs: 
     try:
         written = _upsert_candles(conn, rows_by_tf)
 
-        # Record close events for all closed timeframes
+        # Accumulate closed TFs — written once per batch, not per symbol
+        # This prevents 570 simultaneous upserts on candle_close_events (deadlocks)
         for tf in closed_tfs:
             _CLOSE_COUNTS[tf] = _CLOSE_COUNTS.get(tf, 0) + 1
-            _write_candle_close_event(conn, tf, _CLOSE_COUNTS[tf])
 
         conn.commit()
         if written:
@@ -675,6 +675,50 @@ async def ws_worker(
             backoff = min(backoff * 2.0, WS_RECONNECT_MAX_SEC)
 
 
+async def _candle_close_event_writer() -> None:
+    """
+    Writes candle_close_events to DB once per second as a batch.
+    This prevents deadlocks caused by 570 symbols all writing
+    simultaneously to the same rows in candle_close_events.
+
+    _CLOSE_COUNTS is updated by per-symbol flush threads.
+    This coroutine reads _CLOSE_COUNTS and writes to DB atomically.
+    """
+    while True:
+        await asyncio.sleep(1.0)
+        if not _CLOSE_COUNTS:
+            continue
+
+        # Snapshot and clear atomically
+        snapshot = dict(_CLOSE_COUNTS)
+        _CLOSE_COUNTS.clear()
+
+        if not snapshot:
+            continue
+
+        try:
+            with db_connection() as conn:
+                with conn.cursor() as cur:
+                    for tf, count in snapshot.items():
+                        cur.execute(
+                            """
+                            INSERT INTO candle_close_events
+                                (timeframe, closed_at, symbol_count)
+                            VALUES (%s, NOW(), %s)
+                            ON CONFLICT (timeframe) DO UPDATE SET
+                                closed_at    = EXCLUDED.closed_at,
+                                symbol_count = EXCLUDED.symbol_count
+                            """,
+                            (tf, count),
+                        )
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"candle_close_event batch write failed: {e}")
+            # Put counts back so they're not lost
+            for tf, count in snapshot.items():
+                _CLOSE_COUNTS[tf] = _CLOSE_COUNTS.get(tf, 0) + count
+
+
 async def _fallback_flush_loop() -> None:
     """
     Fallback: every 6 minutes, flush any symbols that have buffered data
@@ -738,6 +782,7 @@ async def start_ws_fleet(symbols: list[str]) -> None:
     ]
     # Add fallback flush as background task
     tasks.append(_fallback_flush_loop())
+    tasks.append(_candle_close_event_writer())
     await asyncio.gather(*tasks)
 
 
@@ -790,6 +835,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 

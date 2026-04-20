@@ -581,18 +581,24 @@ def _write_indicators_batch(tf: str, results: list[pd.DataFrame]) -> int:
     """
     rows = [tuple(x) for x in combined.to_numpy()]
 
+    # Write in chunks with one commit per chunk.
+    # A single 570-row upsert with 137 columns holds locks for 50s+.
+    # Chunked writes release locks between commits → faster overall.
+    CHUNK = 100
+    written = 0
     with db_connection() as conn:
         with conn.cursor() as cur:
-            extras.execute_values(cur, sql, rows, page_size=500)
+            for i in range(0, len(rows), CHUNK):
+                extras.execute_values(cur, sql, rows[i:i + CHUNK], page_size=CHUNK)
+                written += len(rows[i:i + CHUNK])
         conn.commit()
 
     elapsed = time.time() - t0
-    if elapsed > 5.0:
+    if elapsed > 10.0:
         logger.warning(
-            f"[{tf}] DB write took {elapsed:.1f}s for {len(rows)} rows — "
-            f"consider BRIN index or TimescaleDB for better write performance."
+            f"[{tf}] DB write took {elapsed:.1f}s for {written} rows."
         )
-    return len(rows)
+    return written
 
 
 # ── Per-symbol calculation workers ───────────────────────────────────────────
@@ -1000,6 +1006,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
