@@ -57,13 +57,22 @@ warnings.filterwarnings("ignore", message=".*invalid value.*")
 warnings.filterwarnings("ignore", message=".*overflow.*")
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-os.makedirs("logs", exist_ok=True)
+# Use absolute path so the log file is always created relative to this script,
+# regardless of the working directory when launched by the watchdog.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_LOG_DIR     = os.path.join(_SCRIPT_DIR, "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - INDICATOR - %(levelname)s - %(message)s",
+    force=True,   # override any existing root logger config
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("logs/indicator_engine.log", encoding="utf-8"),
+        logging.FileHandler(
+            os.path.join(_LOG_DIR, "indicator_engine.log"),
+            encoding="utf-8",
+        ),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -980,6 +989,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 

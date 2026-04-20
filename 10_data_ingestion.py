@@ -48,13 +48,19 @@ from core.database import get_db_connection
 from core.schema import verify_schema
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-os.makedirs("logs", exist_ok=True)
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_LOG_DIR     = os.path.join(_SCRIPT_DIR, "logs")
+os.makedirs(_LOG_DIR, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - INGESTION - %(levelname)s - %(message)s",
+    force=True,
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("logs/ingestion.log", encoding="utf-8"),
+        logging.FileHandler(
+            os.path.join(_LOG_DIR, "ingestion.log"),
+            encoding="utf-8",
+        ),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -784,6 +790,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
