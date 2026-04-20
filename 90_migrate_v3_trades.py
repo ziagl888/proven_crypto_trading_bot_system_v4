@@ -129,7 +129,7 @@ _BOT_NAME_MAP: dict[str, str] = {
     "AIM1":         "AIM-1",
     "ABR1":         "ABR-1",
     "RUB1":         "RUB-1",
-    "SRA1":         "SR-1",
+    "SRA1":         "SRA-1",
     "EPD1":         "EPD-1",
     "UFI1":         "UFI-1",
     "ROM1":         "ROM-1",
