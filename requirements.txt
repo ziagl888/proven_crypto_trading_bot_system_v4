@@ -1,4 +1,5 @@
 # V4 Crypto Trading Bot System — Python dependencies
+# Tested with Python 3.14 on Windows
 
 # --- Core & Database ---
 requests
@@ -12,19 +13,22 @@ python-dateutil
 aiohttp
 python-dotenv
 
-# --- Math & Indicators ---
+# --- Math & ML ---
 scikit-learn
 scipy
 xgboost
-yfinance
-pandas_ta
 joblib
 
-# --- Charting & Telegram ---
-mplfinance
+# --- Charting ---
 matplotlib
-python-telegram-bot
+mplfinance
 
 # --- Dashboard ---
 flask
 psutil
+
+# --- Removed vs V3 ---
+# pandas_ta   → requires numba which does NOT support Python 3.14
+#               all indicators are calculated natively in 12_indicator_engine.py
+# yfinance    → not used in V4
+# python-telegram-bot → not used in V4, we use requests directly
