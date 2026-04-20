@@ -62,6 +62,8 @@ PROCESSES: list[dict] = [
     {"name": "Gap Checker",       "script": "11_gap_checker.py",      "start_delay":  5, "restart_interval": None},
     {"name": "Indicator Engine",  "script": "12_indicator_engine.py", "start_delay": 10, "restart_interval": None},
     {"name": "Housekeeping",      "script": "23_housekeeping.py",     "start_delay": 15, "restart_interval": None},
+    # ── Infrastructure ────────────────────────────────────────────────
+    {"name": "Telegram Bot",      "script": "20_telegram_bot.py",     "start_delay": 20, "restart_interval": None},
 ]
 
 # ── Shutdown coordination ─────────────────────────────────────────────────────
@@ -240,6 +242,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
