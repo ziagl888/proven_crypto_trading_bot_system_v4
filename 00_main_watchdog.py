@@ -88,7 +88,12 @@ def _start(info: dict) -> None:
         logger.warning(f"Script not found, skipping: {script}")
         return
     logger.info(f"Starting [{name}] ({script})")
-    p = subprocess.Popen([sys.executable, script])
+    # -u = unbuffered so log output appears immediately
+    # PYTHONUNBUFFERED=1 ensures the subprocess flushes stdout/stderr
+    p = subprocess.Popen(
+        [sys.executable, "-u", script],
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
     _running[name] = {
         "process":    p,
         "info":       info,
@@ -171,10 +176,17 @@ def main() -> None:
                 tracker = _running[name]
                 rc = tracker["process"].poll()
                 if rc is not None:
-                    logger.error(f"[{name}] exited (code {rc}) — scheduling restart.")
+                    uptime  = now - tracker["start_time"]
+                    crashed = uptime < 30   # died within 30s = likely crash on import
+                    level   = "CRITICAL" if crashed else "ERROR"
+                    getattr(logger, level.lower())(
+                        f"[{name}] exited (code={rc}, uptime={uptime:.0f}s) — "
+                        f"{'likely import/startup crash' if crashed else 'scheduling restart'}."
+                    )
                     del _running[name]
                     delay = _backoff_delay(name)
                     if delay > 0:
+                        logger.info(f"[{name}] waiting {delay}s before restart...")
                         time.sleep(delay)
                     _start(info)
                     continue
@@ -196,6 +208,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
