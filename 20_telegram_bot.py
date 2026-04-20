@@ -253,6 +253,13 @@ def main() -> None:
                     f"channel={row['channel_id']} "
                     f"(total sent: {sent_total})"
                 )
+                # Clean up chart file after successful send
+                if row["image_path"] and os.path.exists(row["image_path"]):
+                    try:
+                        os.remove(row["image_path"])
+                        logger.debug(f"Deleted chart: {row['image_path']}")
+                    except Exception as e:
+                        logger.debug(f"Could not delete chart: {e}")
             else:
                 _mark_failed(row["id"])
                 failed_total += 1
@@ -271,3 +278,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Telegram Bot stopped (Ctrl+C).")
+
