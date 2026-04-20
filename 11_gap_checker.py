@@ -463,10 +463,13 @@ def main() -> None:
         logger.critical(f"Missing DB tables: {result['missing']}. Aborting.")
         sys.exit(1)
 
-    # No immediate run on startup — the data ingestion already handles
-    # restart gaps via its initial backfill. Running both simultaneously
-    # would cause double REST burst against Binance rate limits.
-    # Gap checker picks up from the next scheduled :20 or :50 run.
+    # Wait for initial backfill to complete before running any gap checks.
+    # The ingestion handles restart gaps itself — gap checker only supplements
+    # from the first scheduled run onward.
+    from core.system_state import wait_for, KEY_BACKFILL_DONE
+    logger.info("Waiting for initial backfill to complete...")
+    wait_for(KEY_BACKFILL_DONE, poll_interval=30, log_interval=120)
+    logger.info("Initial backfill done — gap checker active.")
 
     # Run at :20 and :50 every hour
     while True:
@@ -484,6 +487,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 

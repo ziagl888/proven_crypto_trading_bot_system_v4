@@ -878,6 +878,14 @@ def poll_and_process() -> None:
     Main loop: polls candle_close_events every 10s.
     Triggers indicator calculation + bot runner when a new close is detected.
     """
+    # Wait for ingestion to finish initial backfill before calculating indicators.
+    # Without this, the engine would calculate on empty/partial OHLCV tables.
+    from core.system_state import wait_for, KEY_BACKFILL_DONE
+    if not wait_for(KEY_BACKFILL_DONE, poll_interval=30, log_interval=120):
+        logger.critical("Timed out waiting for initial backfill. Aborting.")
+        sys.exit(1)
+    logger.info("Initial backfill confirmed — starting indicator calculations.")
+
     symbols = load_coins()
     if not symbols:
         logger.critical("No coins in coins.json — run bootstrap first.")
@@ -969,6 +977,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 

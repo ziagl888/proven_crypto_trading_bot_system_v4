@@ -249,6 +249,16 @@ def _infrastructure_tables_ddl() -> str:
             closed_at   TIMESTAMPTZ NOT NULL,
             symbol_count INTEGER    NOT NULL DEFAULT 0
         );
+
+        -- System state: key-value store for inter-process coordination.
+        -- Used to signal readiness between processes (e.g. backfill_done).
+        -- Keys:
+        --   initial_backfill_done  'true' once ingestion completes first backfill
+        CREATE TABLE IF NOT EXISTS system_state (
+            key        TEXT        NOT NULL PRIMARY KEY,
+            value      TEXT        NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
     """
 
 
@@ -597,6 +607,7 @@ def verify_schema() -> dict:
         + [f"indicators_{tf}" for tf in INDICATOR_TIMEFRAMES]
         + [
             "telegram_outbox", "trade_cooldowns", "candle_close_events",
+            "system_state",
             "trades", "signal_log", "bot_performance", "v3_migration_log",
         ]
     )
@@ -607,6 +618,7 @@ def verify_schema() -> dict:
                 cur.execute("SELECT to_regclass(%s)", (tname,))
                 (missing if cur.fetchone()[0] is None else ok).append(tname)
     return {"ok": ok, "missing": missing}
+
 
 
 

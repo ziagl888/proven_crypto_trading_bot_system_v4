@@ -736,6 +736,11 @@ async def main_async() -> None:
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, run_initial_backfill, symbols)
 
+    # Signal other processes that OHLCV data is ready
+    from core.system_state import set_state, KEY_BACKFILL_DONE
+    set_state(KEY_BACKFILL_DONE)
+    logger.info("Bootstrap flag set: initial_backfill_done — indicator engine may now start.")
+
     # 4. Start gap checker (async scheduler)
     gap_task = asyncio.create_task(gap_check_scheduler(symbols))
 
@@ -754,5 +759,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
