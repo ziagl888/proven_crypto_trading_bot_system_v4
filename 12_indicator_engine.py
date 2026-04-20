@@ -703,6 +703,8 @@ def fill_indicator_gaps(tf: str, symbols: list[str]) -> None:
         return
 
     logger.info(f"[{tf}] Found {len(gaps)} symbols with indicator gaps — recalculating...")
+    filled_count = 0
+    filled_rows  = 0
 
     for sym, last_ind_time in gaps.items():
         try:
@@ -737,10 +739,12 @@ def fill_indicator_gaps(tf: str, symbols: list[str]) -> None:
 
             if not ind_to_write.empty:
                 _write_indicators_batch(tf, [ind_to_write])
-                logger.info(
+                logger.debug(
                     f"[{tf}] Gap fill {sym}: wrote {len(ind_to_write)} rows "
                     f"(from {ind_to_write['open_time'].iloc[0].strftime('%Y-%m-%d %H:%M')})"
                 )
+                filled_count += 1
+                filled_rows  += len(ind_to_write)
 
                 # Update cache if this is a priority TF
                 if tf in CACHE_TIMEFRAMES:
@@ -752,7 +756,10 @@ def fill_indicator_gaps(tf: str, symbols: list[str]) -> None:
         except Exception as e:
             logger.warning(f"[{tf}] Gap fill failed for {sym}: {e}")
 
-    logger.info(f"[{tf}] Indicator gap fill complete.")
+    logger.info(
+        f"[{tf}] Indicator gap fill complete — "
+        f"{filled_count} symbols, {filled_rows} rows written."
+    )
 
 
 # ── Main calculation cycle ────────────────────────────────────────────────────
@@ -769,6 +776,7 @@ def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
     logger.info(f"[{tf}] Starting indicator cycle for {len(symbols)} symbols...")
 
     # Step 1: Load all OHLCV in one query
+    t1 = time.time()
     try:
         df_all = _load_ohlcv_batch(tf, symbols)
     except Exception as e:
@@ -778,6 +786,7 @@ def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
     if df_all.empty:
         logger.warning(f"[{tf}] No OHLCV data found.")
         return
+    logger.debug(f"[{tf}] OHLCV load: {time.time()-t1:.1f}s ({len(df_all)} rows)")
 
     # Step 2: Split by symbol using groupby (one pass, not 500 boolean masks)
     sym_groups = {str(sym): grp.copy() for sym, grp in df_all.groupby("symbol", sort=False)}
@@ -788,8 +797,7 @@ def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
     ]
 
     # Use ThreadPoolExecutor — avoids ProcessPool spawn issues on Windows
-    # (Python 3.14 + WMI bug) and eliminates pickle/IPC overhead entirely.
-    # pandas/numpy release the GIL during computation so threads are effective.
+    t2 = time.time()
     results: list[pd.DataFrame] = []
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
         futures = {pool.submit(_calc_symbol, args): args[0] for args in args_list}
@@ -797,6 +805,7 @@ def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
             result = future.result()
             if result is not None:
                 results.append(result)
+    logger.debug(f"[{tf}] Calculation: {time.time()-t2:.1f}s ({len(results)} symbols)")
 
     if not results:
         logger.warning(f"[{tf}] No indicator results produced.")
@@ -1006,6 +1015,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
