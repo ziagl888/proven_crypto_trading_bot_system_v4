@@ -42,6 +42,19 @@ from core.database import db_connection, get_db_connection
 from core.schema import INDICATOR_COLUMNS, verify_schema
 from core.bootstrap import load_coins
 
+# ── Suppress noisy warnings globally ─────────────────────────────────────────
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message=".*SQLAlchemy.*")
+warnings.filterwarnings("ignore", message=".*pandas.*")
+warnings.filterwarnings("ignore", message=".*numpy.*")
+# Suppress scipy/statsmodels convergence warnings that spam logs
+warnings.filterwarnings("ignore", message=".*divide by zero.*")
+warnings.filterwarnings("ignore", message=".*invalid value.*")
+warnings.filterwarnings("ignore", message=".*overflow.*")
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
@@ -108,15 +121,14 @@ def _kama(series: pd.Series, period: int = 10, fast: int = 2, slow: int = 30) ->
     Volatility is pre-computed as rolling sum of abs(diff) — avoids
     repeated np.diff slicing inside the loop (O(n) → O(1) per candle).
     """
-    closes   = series.values.astype(float)
+    closes   = np.asarray(series, dtype=np.float64)   # guaranteed C-contiguous float64
     n        = len(closes)
-    kama_arr = np.full(n, np.nan)
+    kama_arr = np.full(n, np.nan, dtype=np.float64)
     if n <= period:
         return pd.Series(kama_arr, index=series.index)
 
     # Pre-compute absolute changes and rolling volatility sum
-    abs_diff = np.abs(np.diff(closes, prepend=closes[0]))   # len = n
-    # Rolling sum of abs_diff over last `period` bars (volatility)
+    abs_diff   = np.abs(np.diff(closes, prepend=closes[0]))  # len = n, float64
     vol_cumsum = np.cumsum(abs_diff)
     # vol[i] = sum of abs_diff[i-period+1 .. i]
     vol = vol_cumsum.copy()
@@ -178,8 +190,8 @@ def _trendline(df: pd.DataFrame) -> dict[str, pd.Series]:
 
 def _hvn_poc(df: pd.DataFrame) -> dict[str, float]:
     try:
-        prices  = df["close"].values
-        volumes = df["volume"].values if "volume" in df.columns else np.ones(len(prices))
+        prices  = np.asarray(df["close"].values, dtype=np.float64)
+        volumes = np.asarray(df["volume"].values, dtype=np.float64) if "volume" in df.columns else np.ones(len(prices), dtype=np.float64)
         bins    = max(int(np.sqrt(len(prices))), 10)
         hist, edges = np.histogram(prices, bins=bins, weights=volumes)
         poc_idx     = int(np.argmax(hist))
@@ -565,7 +577,6 @@ def _write_indicators_batch(tf: str, results: list[pd.DataFrame]) -> int:
 
 def _calc_symbol(args: tuple[str, pd.DataFrame, str]) -> pd.DataFrame | None:
     """Single-symbol worker — kept for compatibility."""
-    import warnings
     warnings.filterwarnings("ignore")
     symbol, df_sym, tf = args
     try:
@@ -586,7 +597,6 @@ def _calc_symbol_batch(
     overhead compared to one future per symbol.
     Returns list of single-row DataFrames (latest indicator row per symbol).
     """
-    import warnings
     warnings.filterwarnings("ignore")
 
     results = []
@@ -628,7 +638,7 @@ def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
         return
 
     # Step 2: Split by symbol using groupby (one pass, not 500 boolean masks)
-    sym_groups = {sym: grp.copy() for sym, grp in df_all.groupby("symbol", sort=False)}
+    sym_groups = {str(sym): grp.copy() for sym, grp in df_all.groupby("symbol", sort=False)}
     args_list = [
         (sym, sym_groups[sym], tf)
         for sym in symbols
@@ -665,7 +675,7 @@ def run_indicator_cycle(tf: str, symbols: list[str]) -> None:
             sym  = str(row.get("symbol", ""))
             if not sym:
                 continue
-            INDICATOR_CACHE[tf][sym] = row.to_dict()
+            INDICATOR_CACHE[tf][sym] = {str(k): v for k, v in row.to_dict().items()}
             cache_updated += 1
         logger.info(
             f"[{tf}] Cache updated: {cache_updated} symbols."
@@ -819,6 +829,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
