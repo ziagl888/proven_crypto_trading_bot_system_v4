@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 
 from core.bootstrap import load_coins
+from core.shutdown import ShutdownHandler
 from core.config import INGEST_TIMEFRAMES
 from core.database import db_connection, get_db_connection
 from core.schema import verify_schema, INDICATOR_TIMEFRAMES
@@ -471,8 +472,10 @@ def main() -> None:
     wait_for(KEY_BACKFILL_DONE, poll_interval=30, log_interval=120)
     logger.info("Initial backfill done — gap checker active.")
 
+    shutdown = ShutdownHandler("GAP_CHECKER")
+
     # Run at :20 and :50 every hour
-    while True:
+    while not shutdown.is_set():
         wait = _seconds_until_next_run()
         next_dt = datetime.datetime.now(datetime.timezone.utc) + \
                   datetime.timedelta(seconds=wait)
@@ -481,12 +484,18 @@ def main() -> None:
             f"{next_dt.strftime('%H:%M UTC')} "
             f"(in {wait/60:.0f} min)."
         )
-        time.sleep(wait)
-        run_gap_check()
+        # Interruptible sleep — wakes up on Ctrl+C
+        if shutdown.sleep(wait):
+            break
+        if not shutdown.is_set():
+            run_gap_check()
+
+    logger.info("Gap Checker stopped cleanly.")
 
 
 if __name__ == "__main__":
     main()
+
 
 
 

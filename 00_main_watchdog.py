@@ -17,6 +17,7 @@ import os
 import sys
 import time
 import logging
+import signal
 import subprocess
 
 from dotenv import load_dotenv
@@ -134,10 +135,20 @@ def _backoff_delay(name: str) -> float:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def _shutdown_all(signum, frame) -> None:
+    """Handle SIGTERM gracefully — same as Ctrl+C."""
+    logger.info("SIGTERM received — shutting down all processes...")
+    for name in list(_running.keys()):
+        _stop(name)
+    logger.info("System fully offline.")
+    sys.exit(0)
+
+
 def main() -> None:
     logger.info("=" * 60)
     logger.info("V4 Crypto Trading Bot System — Watchdog starting")
     logger.info("=" * 60)
+    signal.signal(signal.SIGTERM, _shutdown_all)
 
     # Step 1: Bootstrap (always runs)
     _run_bootstrap()
@@ -208,6 +219,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 

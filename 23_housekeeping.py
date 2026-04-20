@@ -23,6 +23,7 @@ from core.bootstrap import (
     load_coins,
 )
 from core.config import INGEST_TIMEFRAMES
+from core.shutdown import ShutdownHandler
 from core.database import db_connection
 from core.schema import verify_schema
 
@@ -215,7 +216,9 @@ def main() -> None:
     run_all_tasks()
 
     # Then run every day at 03:00 UTC
-    while True:
+    shutdown = ShutdownHandler("HOUSEKEEPING")
+
+    while not shutdown.is_set():
         wait = _seconds_until_next_run()
         next_dt = datetime.datetime.now(datetime.timezone.utc) + \
                   datetime.timedelta(seconds=wait)
@@ -224,9 +227,10 @@ def main() -> None:
             f"{next_dt.strftime('%Y-%m-%d %H:%M UTC')} "
             f"(in {wait/3600:.1f}h)."
         )
-        time.sleep(wait)
+        shutdown.shutdown.sleep(wait)
         run_all_tasks()
 
 
 if __name__ == "__main__":
     main()
+

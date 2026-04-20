@@ -41,6 +41,7 @@ from core.config import INDICATOR_TIMEFRAMES, NUM_WORKERS
 from core.database import db_connection, get_db_connection
 from core.schema import INDICATOR_COLUMNS, verify_schema
 from core.bootstrap import load_coins
+from core.shutdown import ShutdownHandler
 
 # ── Suppress noisy warnings globally ─────────────────────────────────────────
 import warnings
@@ -887,8 +888,9 @@ def poll_and_process() -> None:
             run_bots_for_timeframe(tf)
 
     logger.info("Polling candle_close_events every 10s...")
+    shutdown = ShutdownHandler("INDICATOR")
 
-    while True:
+    while not shutdown.is_set():
         try:
             with db_connection() as conn:
                 with conn.cursor() as cur:
@@ -900,6 +902,8 @@ def poll_and_process() -> None:
             for tf, closed_at in rows:
                 if tf not in INDICATOR_TIMEFRAMES:
                     continue
+                if shutdown.is_set():
+                    break
 
                 # Ensure timezone aware
                 if closed_at.tzinfo is None:
@@ -911,19 +915,15 @@ def poll_and_process() -> None:
 
                 logger.info(f"New candle close detected: {tf} at {closed_at}")
 
-                # Skip if a cycle is already running for this TF —
-                # prevents spawning parallel cycles when poll interval < cycle duration.
+                # Skip if a cycle is already running for this TF
                 with _RUNNING_TFS_LOCK:
                     if tf in _RUNNING_TFS:
                         logger.debug(f"[{tf}] Cycle already running — skipping poll.")
                         continue
                     _RUNNING_TFS.add(tf)
 
-                # Refresh coin list periodically (housekeeping updates it)
                 fresh_symbols = load_coins() or symbols
 
-                # Run calculation in a thread so we can process multiple TFs.
-                # _LAST_PROCESSED is set inside the thread AFTER success.
                 t = threading.Thread(
                     target=_run_cycle_and_bots,
                     args=(tf, fresh_symbols, closed_at),
@@ -935,7 +935,17 @@ def poll_and_process() -> None:
         except Exception as e:
             logger.error(f"Poll error: {e}")
 
-        time.sleep(10)
+        # Interruptible sleep
+        shutdown.sleep(10)
+
+    # Wait for any running cycles to finish
+    logger.info("Indicator Engine stopping — waiting for active cycles...")
+    for _ in range(shutdown.timeout):
+        with _RUNNING_TFS_LOCK:
+            if not _RUNNING_TFS:
+                break
+        time.sleep(1)
+    logger.info("Indicator Engine stopped cleanly.")
 
 
 def _run_cycle_and_bots(tf: str, symbols: list[str], closed_at: datetime.datetime) -> None:
@@ -970,6 +980,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
