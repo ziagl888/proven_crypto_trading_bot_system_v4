@@ -49,7 +49,7 @@ INDICATOR_TIMEFRAMES = ["30m", "1h", "2h", "4h", "1d", "1w"]
 # Timeframes actively ingested via WebSocket + REST
 INGEST_TIMEFRAMES = ["5m", "15m", "30m", "1h", "2h", "4h", "1d", "1w"]
 
-NUM_WORKERS = _int("NUM_WORKERS", 4)
+NUM_WORKERS = _int("NUM_WORKERS", 16)
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN = _required("TELEGRAM_BOT_TOKEN")
@@ -108,3 +108,4 @@ MAIN_CHANNEL_COINS = [
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 DASHBOARD_PORT = _int("DASHBOARD_PORT", 5000)
+
