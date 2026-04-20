@@ -93,6 +93,12 @@ _LAST_PROCESSED: dict[str, datetime.datetime] = {}
 _RUNNING_TFS: set[str] = set()
 _RUNNING_TFS_LOCK = threading.Lock()
 
+# Global semaphore: max 2 concurrent cycles across ALL timeframes.
+# Each cycle spawns NUM_WORKERS=16 threads doing CPU-bound pandas work.
+# 4 simultaneous cycles = 64 threads fighting for the GIL → 160s instead of 30s.
+# 2 simultaneous cycles = 32 threads → ~2×30s = 60s total.
+_CYCLE_SEMAPHORE = threading.Semaphore(2)
+
 # Cache-priority timeframes (loaded into INDICATOR_CACHE)
 CACHE_TIMEFRAMES = {"1h", "30m"}
 
@@ -986,17 +992,20 @@ def poll_and_process() -> None:
 def _run_cycle_and_bots(tf: str, symbols: list[str], closed_at: datetime.datetime) -> None:
     """
     Runs indicator cycle then bot runner for a timeframe.
-    Always removes tf from _RUNNING_TFS when done so the next
-    candle close can trigger a new cycle.
+    Acquires _CYCLE_SEMAPHORE to limit concurrent CPU-bound cycles.
+    Always removes tf from _RUNNING_TFS when done.
     Only marks _LAST_PROCESSED after success — failed cycles retry on next poll.
     """
     try:
-        run_indicator_cycle(tf, symbols)
-        _LAST_PROCESSED[tf] = closed_at   # mark as done only on success
+        # Limit concurrent cycles to avoid GIL contention.
+        # 4 cycles × 16 threads = 64 CPU-bound threads → 160s.
+        # Max 2 at a time → ~60s total.
+        with _CYCLE_SEMAPHORE:
+            run_indicator_cycle(tf, symbols)
+            _LAST_PROCESSED[tf] = closed_at
         run_bots_for_timeframe(tf)
     except Exception as e:
         logger.error(f"[{tf}] Cycle+bots error: {e}")
-        # Do NOT update _LAST_PROCESSED — will retry on next poll
     finally:
         with _RUNNING_TFS_LOCK:
             _RUNNING_TFS.discard(tf)
@@ -1015,6 +1024,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
