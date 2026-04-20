@@ -57,6 +57,28 @@ from core.database import db_connection
 from core.schema import verify_schema
 from core.shutdown import ShutdownHandler
 
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _floor_hour(dt: "datetime.datetime", hours: int = 0) -> "datetime.datetime":
+    """
+    Returns the start of the last completed N-hour block.
+    e.g. at 17:35 UTC:
+      _floor_hour(now, 1)  → 17:00 UTC  (start of last completed 1h)
+      _floor_hour(now, 4)  → 16:00 UTC  (start of last completed 4h block)
+      _floor_hour(now, 24) → 2026-04-20 00:00 UTC
+    """
+    import datetime as _dt
+    floored = dt.replace(minute=0, second=0, microsecond=0)
+    if hours <= 1:
+        return floored - _dt.timedelta(hours=1)
+    # For multi-hour blocks: floor to nearest completed block
+    block_start_h = (floored.hour // hours) * hours
+    block_start = floored.replace(hour=block_start_h)
+    if block_start >= floored:
+        block_start -= _dt.timedelta(hours=hours)
+    return block_start - _dt.timedelta(hours=hours * (hours - 1) // hours)
+
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 CHANNEL_ID = SENTIMENT_CHANNEL_ID
@@ -183,7 +205,9 @@ def _build_chunks(blocks: list[str], header_first: str,
 async def job_main_reports() -> None:
     logger.info("Running Main Volume Report...")
     now  = datetime.datetime.now(timezone.utc)
-    t1h  = now - timedelta(hours=1)
+    # Use floored hour boundaries — reports always cover completed periods
+    hour_start = now.replace(minute=0, second=0, microsecond=0)
+    t1h  = hour_start - timedelta(hours=1)   # start of last completed hour
 
     def _report(symbol: str, label: str, symbols: list[str]) -> None:
         try:
@@ -192,7 +216,7 @@ async def job_main_reports() -> None:
 
             with db_connection() as conn:
                 with conn.cursor() as cur:
-                    # Price change 1h/4h/24h/7d/30d
+                    # Price change over completed periods ending at hour_start
                     changes = {}
                     for hours, col in [(1,"1h"),(4,"4h"),(24,"24h"),(168,"7d"),(720,"30d")]:
                         cur.execute(
@@ -201,9 +225,10 @@ async def job_main_reports() -> None:
                             FROM ohlcv_30m
                             WHERE symbol = ANY(%s::text[])
                               AND open_time >= %s
+                              AND open_time < %s
                             ORDER BY open_time ASC LIMIT 1
                             """,
-                            (sym_list, now - timedelta(hours=hours)),
+                            (sym_list, hour_start - timedelta(hours=hours), hour_start),
                         )
                         row = cur.fetchone()
                         cur.execute(
@@ -271,6 +296,8 @@ async def job_main_reports() -> None:
 async def job_gainers_losers() -> None:
     logger.info("Running Gainers & Losers...")
     now = datetime.datetime.now(timezone.utc)
+    # Snap to last completed hour boundary
+    hour_start = now.replace(minute=0, second=0, microsecond=0)
     altcoins = _load_altcoins()
     if not altcoins:
         return
@@ -284,10 +311,10 @@ async def job_gainers_losers() -> None:
                         cur.execute(
                             """
                             SELECT open_time, close FROM ohlcv_30m
-                            WHERE symbol = %s AND open_time >= %s
+                            WHERE symbol = %s AND open_time >= %s AND open_time < %s
                             ORDER BY open_time ASC
                             """,
-                            (sym, now - timedelta(hours=24)),
+                            (sym, hour_start - timedelta(hours=24), hour_start),
                         )
                         rows = cur.fetchall()
                         if not rows:
@@ -299,7 +326,8 @@ async def job_gainers_losers() -> None:
                             continue
 
                         def _chg(hours):
-                            sub = df[df["ot"] >= now - timedelta(hours=hours)]
+                            cutoff = hour_start - timedelta(hours=hours)
+                            sub = df[df["ot"] >= cutoff]
                             if sub.empty: return None
                             p0 = float(sub["c"].iloc[0])
                             return (curr_p / p0 - 1) * 100 if p0 > 0 else None
@@ -350,8 +378,9 @@ async def job_gainers_losers() -> None:
 async def job_volume_spikes() -> None:
     logger.info("Running Volume Spikes...")
     now = datetime.datetime.now(timezone.utc)
-    t4h = now - timedelta(hours=4)
-    t1h = now - timedelta(hours=1)
+    hour_start = now.replace(minute=0, second=0, microsecond=0)
+    t1h = hour_start - timedelta(hours=1)   # last completed hour
+    t4h = hour_start - timedelta(hours=4)   # 4h baseline
     altcoins = _load_altcoins()
     if not altcoins:
         return
@@ -412,7 +441,8 @@ async def job_volume_spikes() -> None:
 async def job_volatile_coins() -> None:
     logger.info("Running Volatile Coins...")
     now = datetime.datetime.now(timezone.utc)
-    t4h = now - timedelta(hours=4)
+    hour_start = now.replace(minute=0, second=0, microsecond=0)
+    t4h = hour_start - timedelta(hours=4)   # last completed 4h window
     altcoins = _load_altcoins()
     if not altcoins:
         return
@@ -869,4 +899,5 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Market Tracker stopped (Ctrl+C).")
+
 
