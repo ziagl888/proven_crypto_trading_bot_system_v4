@@ -60,11 +60,14 @@ WORKERS      = 3
 
 class TradeToSimulate:
     """Holds all data needed to simulate one trade."""
-    __slots__ = ('id','symbol','direction','entry','sl','tps','opened_at','closed_at')
-    def __init__(self, id, symbol, direction, entry, sl, tps, opened_at, closed_at):
+    __slots__ = ('id','symbol','direction','entry','sl','tps',
+                 'opened_at','closed_at','current_status')
+    def __init__(self, id, symbol, direction, entry, sl, tps,
+                 opened_at, closed_at, current_status='OPEN'):
         self.id = id; self.symbol = symbol; self.direction = direction
         self.entry = entry; self.sl = sl; self.tps = tps
         self.opened_at = opened_at; self.closed_at = closed_at
+        self.current_status = current_status
 
 
 class SimResult:
@@ -310,8 +313,34 @@ def _simulate_trade(trade: TradeToSimulate,
                     position_pct=0.0,
                 )
 
-    # End of candle data — trade still open or close time exceeded
+    # End of candle data
     last_close = float(df["close"].iloc[-1])
+
+    # If this was an OPEN trade and we reached NOW without hitting SL/TP
+    # → trade is genuinely still open → keep as OPEN
+    if trade.current_status == 'OPEN':
+        # Update trailing SL in DB (may have moved due to partial TPs hit)
+        # but keep status OPEN so V4 trade monitor continues watching it
+        if partial_pnls:
+            # Some TPs already hit — update tp_hit and trailing sl
+            return SimResult(
+                trade_id=trade.id, status="OPEN",
+                outcome=None, tp_hit=tp_hit,
+                close_price=None,
+                pnl_r=None,
+                weighted_pnl_r=None,
+                position_pct=round(position_pct, 4),
+                note=f"still_open_tp_hit_{tp_hit}_sl_now_{current_sl:.6f}",
+            )
+        else:
+            return SimResult(
+                trade_id=trade.id, status="OPEN",
+                outcome=None, tp_hit=0,
+                close_price=None, pnl_r=None, weighted_pnl_r=None,
+                position_pct=1.0, note="still_open",
+            )
+
+    # Closed trade that ran out of candle data → CLOSED_MANUAL
     if partial_pnls:
         partial_pnls.append((calc_r(last_close), position_pct))
         w_pnl   = sum(r * f for r, f in partial_pnls)
@@ -337,8 +366,12 @@ def _process_trade(trade: TradeToSimulate) -> SimResult:
     """Fetches candles and simulates one trade."""
     conn = get_db_connection()
     try:
-        # Simulation window: from open to close + 24h safety buffer
-        end_dt = trade.closed_at or datetime.datetime.now(datetime.timezone.utc)
+        # For open trades: simulate from open to NOW
+        # For closed trades: simulate from open to close + 24h buffer
+        if trade.current_status == 'OPEN' or trade.closed_at is None:
+            end_dt = datetime.datetime.now(datetime.timezone.utc)
+        else:
+            end_dt = trade.closed_at + datetime.timedelta(hours=24)
         candles = _get_candles(conn, trade.symbol, trade.opened_at, end_dt)
 
         if candles.empty:
@@ -366,14 +399,13 @@ def _process_trade(trade: TradeToSimulate) -> SimResult:
 # ── DB operations ─────────────────────────────────────────────────────────────
 
 def _load_trades_to_simulate(conn, limit: int | None) -> list[TradeToSimulate]:
-    """Loads all V3 closed trades that need simulation."""
+    """Loads ALL V3 trades (open + closed) for simulation."""
     sql = """
         SELECT id, symbol, direction, entry,
                sl, tp1, tp2, tp3, tp4, tp5, tp6,
-               opened_at, closed_at
+               opened_at, closed_at, status
         FROM trades
         WHERE bot_version = 'v3'
-          AND status != 'OPEN'
         ORDER BY opened_at ASC
     """
     if limit:
@@ -387,7 +419,7 @@ def _load_trades_to_simulate(conn, limit: int | None) -> list[TradeToSimulate]:
     for row in rows:
         (trade_id, symbol, direction, entry,
          sl, tp1, tp2, tp3, tp4, tp5, tp6,
-         opened_at, closed_at) = row
+         opened_at, closed_at, current_status) = row
 
         # Collect non-null targets
         tps = [float(t) for t in [tp1, tp2, tp3, tp4, tp5, tp6]
@@ -408,6 +440,7 @@ def _load_trades_to_simulate(conn, limit: int | None) -> list[TradeToSimulate]:
             id=trade_id, symbol=symbol, direction=direction,
             entry=float(entry), sl=float(sl), tps=tps,
             opened_at=opened_at, closed_at=closed_at,
+            current_status=current_status,
         ))
 
     return trades
@@ -418,6 +451,46 @@ def _apply_result(conn, result: SimResult, dry_run: bool) -> None:
     if dry_run:
         return
 
+    if result.status == "OPEN":
+        # Still open — only update tp_hit, position_pct and trailing SL
+        # Extract trailing SL from note if available
+        trailing_sl = None
+        if result.note and "sl_now_" in result.note:
+            try:
+                trailing_sl = float(result.note.split("sl_now_")[1])
+            except Exception:
+                pass
+
+        if trailing_sl is not None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE trades SET
+                        tp_hit       = %s,
+                        position_pct = %s,
+                        sl           = %s,
+                        last_updated = NOW()
+                    WHERE id = %s
+                    """,
+                    (result.tp_hit, result.position_pct,
+                     trailing_sl, result.trade_id),
+                )
+        else:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE trades SET
+                        tp_hit       = %s,
+                        position_pct = %s,
+                        last_updated = NOW()
+                    WHERE id = %s
+                    """,
+                    (result.tp_hit, result.position_pct, result.trade_id),
+                )
+        conn.commit()
+        return
+
+    # Closed trade — full update
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -429,6 +502,8 @@ def _apply_result(conn, result: SimResult, dry_run: bool) -> None:
                 pnl_r           = %s,
                 weighted_pnl_r  = %s,
                 position_pct    = %s,
+                closed_at       = CASE WHEN closed_at IS NULL THEN NOW()
+                                       ELSE closed_at END,
                 last_updated    = NOW()
             WHERE id = %s
             """,
@@ -474,7 +549,7 @@ def main() -> None:
 
     t_start   = time.time()
     results   = []
-    wins = losses = no_data = 0
+    wins = losses = no_data = still_open = 0
 
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
         futures = {pool.submit(_process_trade, t): t for t in trades}
@@ -484,7 +559,9 @@ def main() -> None:
             results.append(result)
             done += 1
 
-            if result.outcome == "WIN":
+            if result.status == "OPEN":
+                still_open += 1
+            elif result.outcome == "WIN":
                 wins += 1
             elif result.outcome == "LOSS":
                 losses += 1
@@ -520,6 +597,7 @@ def main() -> None:
     logger.info(f"  Wins:          {wins}")
     logger.info(f"  Losses:        {losses}")
     logger.info(f"  No data:       {no_data}")
+    logger.info(f"  Still open:    {still_open}")
     logger.info(f"  Win rate:      {win_rate:.1f}%")
     logger.info(f"  Avg pnl_r:     {avg_r:.2f}R")
     if args.dry_run:
@@ -540,3 +618,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
