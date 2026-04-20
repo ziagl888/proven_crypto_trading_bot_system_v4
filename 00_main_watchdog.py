@@ -19,6 +19,7 @@ import time
 import logging
 import signal
 import subprocess
+import threading
 
 from dotenv import load_dotenv
 
@@ -51,6 +52,11 @@ PROCESSES: list[dict] = [
     {"name": "Indicator Engine",  "script": "12_indicator_engine.py", "start_delay": 10, "restart_interval": None},
     {"name": "Housekeeping",      "script": "23_housekeeping.py",     "start_delay": 15, "restart_interval": None},
 ]
+
+# ── Shutdown coordination ─────────────────────────────────────────────────────
+# Used to make all time.sleep() calls in the watchdog interruptible.
+_SHUTDOWN_EVENT = threading.Event()
+
 
 # ── Runtime state ─────────────────────────────────────────────────────────────
 _running: dict[str, dict] = {}
@@ -138,6 +144,7 @@ def _backoff_delay(name: str) -> float:
 def _shutdown_all(signum, frame) -> None:
     """Handle SIGTERM gracefully — same as Ctrl+C."""
     logger.info("SIGTERM received — shutting down all processes...")
+    _SHUTDOWN_EVENT.set()
     for name in list(_running.keys()):
         _stop(name)
     logger.info("System fully offline.")
@@ -165,7 +172,8 @@ def main() -> None:
         delay = info.get("start_delay", 0)
         wait  = delay - last
         if wait > 0:
-            time.sleep(wait)
+            if _SHUTDOWN_EVENT.wait(timeout=wait):
+                return  # Ctrl+C during stagger — abort startup
         _start(info)
         last = delay
 
@@ -198,7 +206,8 @@ def main() -> None:
                     delay = _backoff_delay(name)
                     if delay > 0:
                         logger.info(f"[{name}] waiting {delay}s before restart...")
-                        time.sleep(delay)
+                        if _SHUTDOWN_EVENT.wait(timeout=delay):
+                            break  # Shutdown during backoff — stop monitoring
                     _start(info)
                     continue
                 interval = info.get("restart_interval")
@@ -208,10 +217,11 @@ def main() -> None:
                         logger.info(f"[{name}] scheduled restart (uptime {uptime/3600:.1f}h).")
                         _stop(name)
                         _start(info)
-            time.sleep(10)
+            _SHUTDOWN_EVENT.wait(timeout=10)
 
     except KeyboardInterrupt:
         logger.info("Watchdog stopped (Ctrl+C) — shutting down all processes...")
+        _SHUTDOWN_EVENT.set()
         for name in list(_running.keys()):
             _stop(name)
         logger.info("System fully offline.")
@@ -219,6 +229,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
