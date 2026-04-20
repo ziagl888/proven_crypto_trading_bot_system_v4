@@ -71,7 +71,7 @@ def _load_open_trades(conn) -> list[dict]:
             """
             SELECT
                 id, bot_name, symbol, direction,
-                entry_price,
+                entry,
                 tp1, tp2, tp3, tp4, tp5, tp6,
                 sl, sl_initial,
                 tp_count, tp_hit,
@@ -152,7 +152,7 @@ def _calc_pnl_r(entry: float, close_price: float,
 def _close_trade(conn, trade: dict, close_price: float,
                  tp_hit: int, outcome: str, close_reason: str) -> None:
     """Closes a trade — updates status, close_price, pnl_r, closed_at."""
-    entry      = float(trade["entry_price"] or 0)
+    entry      = float(trade["entry"] or 0)
     sl_initial = float(trade["sl_initial"] or trade["sl"] or 0)
     direction  = trade["direction"]
 
@@ -167,7 +167,6 @@ def _close_trade(conn, trade: dict, close_price: float,
                 close_price  = %s,
                 tp_hit       = %s,
                 pnl_r        = %s,
-                close_reason = %s,
                 closed_at    = NOW(),
                 last_updated = NOW()
             WHERE id = %s
@@ -266,7 +265,7 @@ def _check_trade(conn, trade: dict, candle: dict) -> bool:
     """
     direction  = trade["direction"]
     is_long    = direction == "LONG"
-    entry      = float(trade["entry_price"] or 0)
+    entry      = float(trade["entry"] or 0)
     sl         = float(trade["sl"] or 0)
     current_tp = int(trade["tp_hit"] or 0)
     tps        = _get_trade_tps(trade)
@@ -404,3 +403,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Trade Monitor stopped (Ctrl+C).")
+
