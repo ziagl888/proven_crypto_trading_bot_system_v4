@@ -523,13 +523,10 @@ def _flush_symbol_to_db(symbol: str, symbol_data: dict[str, tuple], closed_tfs: 
 
         # Accumulate closed TFs — written once per batch, not per symbol
         # This prevents 570 simultaneous upserts on candle_close_events (deadlocks)
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        # _CLOSE_TIMES is set in the WS handler from k["T"] (Binance close_time)
+        # which is identical for all symbols in the same candle — stable dedup.
         for tf in closed_tfs:
             _CLOSE_COUNTS[tf] = _CLOSE_COUNTS.get(tf, 0) + 1
-            # Record actual close time — use first symbol that closes this TF
-            # so all 570 symbols share the same candle close timestamp
-            if tf not in _CLOSE_TIMES:
-                _CLOSE_TIMES[tf] = now_utc
 
         conn.commit()
         if written:
@@ -636,6 +633,17 @@ async def ws_worker(
                             float(k["l"]), float(k["c"]),
                             float(k["v"]),
                         )
+
+                        # Binance kline close_time (k["T"]) — identical for all
+                        # symbols in the same candle period (e.g. all 30m candles
+                        # closing at 14:30:00.000 have the same close_time).
+                        # Used as candle_close_events.closed_at for stable dedup.
+                        if is_closed and "T" in k:
+                            close_time = datetime.datetime.fromtimestamp(
+                                k["T"] / 1000, tz=datetime.timezone.utc
+                            )
+                            if tf not in _CLOSE_TIMES:
+                                _CLOSE_TIMES[tf] = close_time
 
                         # Always update RAM buffer
                         _BUFFER[sym][tf] = kline
