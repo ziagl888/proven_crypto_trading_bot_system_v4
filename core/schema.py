@@ -515,8 +515,9 @@ def _trade_tables_ddl() -> str:
 
         -- ── Whale trades (written by 33_whale_monitor.py) ───────────────────
         -- Stores individual aggTrade records above MIN_USD threshold ($25k).
-        -- Estimated volume: depends on market activity.
-        -- Retention: 3 days (housekeeping purges older rows nightly).
+        -- Retention: UNLIMITED — no automatic purge. Valuable for market
+        -- direction analysis. Manage via manual SQL if disk space is an issue.
+        -- Funding rates: 3-day rolling window (housekeeping purges nightly).
         CREATE TABLE IF NOT EXISTS whale_trades (
             id          BIGSERIAL   PRIMARY KEY,
             symbol      TEXT        NOT NULL,
@@ -742,6 +743,7 @@ def verify_schema() -> dict:
                 cur.execute("SELECT to_regclass(%s)", (tname,))
                 (missing if cur.fetchone()[0] is None else ok).append(tname)
     return {"ok": ok, "missing": missing}
+
 
 
 

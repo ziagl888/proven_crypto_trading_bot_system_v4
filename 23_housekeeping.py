@@ -76,7 +76,7 @@ RUN_HOUR_UTC = 3
 
 def task_update_coins() -> None:
     """Fetches fresh coin list from Binance and updates coins.json."""
-    logger.info("Task 1/4: Updating coin list...")
+    logger.info("Task 1/5: Updating coin list...")
     old_coins = set(load_coins())
     new_coins = fetch_active_coins()
     save_coins(new_coins)
@@ -109,7 +109,7 @@ def task_ohlcv_cleanup() -> None:
     Deletes OHLCV rows beyond the retention limit for each timeframe.
     Uses a single DELETE per timeframe — no per-symbol loop.
     """
-    logger.info("Task 3/4: OHLCV cleanup...")
+    logger.info("Task 3/5: OHLCV cleanup...")
     total_deleted = 0
 
     with db_connection() as conn:
@@ -144,9 +144,28 @@ def task_ohlcv_cleanup() -> None:
     logger.info(f"  OHLCV cleanup done — {total_deleted:,} rows deleted total.")
 
 
+def task_funding_cleanup() -> None:
+    """Deletes funding_rates rows older than 3 days (rolling window)."""
+    logger.info("Task 4/5: Funding rates cleanup...")
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)
+    with db_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM funding_rates WHERE ts < %s",
+                    (cutoff,),
+                )
+                deleted = cur.rowcount
+            conn.commit()
+            logger.info(f"  Funding cleanup done — {deleted:,} rows deleted.")
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"  Funding cleanup failed: {e}")
+
+
 def task_outbox_cleanup() -> None:
     """Deletes sent telegram_outbox rows older than 7 days."""
-    logger.info("Task 4/4: Telegram outbox cleanup...")
+    logger.info("Task 5/5: Telegram outbox cleanup...")
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
 
     with db_connection() as conn:
@@ -191,6 +210,11 @@ def run_all_tasks() -> None:
         task_ohlcv_cleanup()
     except Exception as e:
         logger.error(f"task_ohlcv_cleanup failed: {e}")
+
+    try:
+        task_funding_cleanup()
+    except Exception as e:
+        logger.error(f"task_funding_cleanup failed: {e}")
 
     try:
         task_outbox_cleanup()
@@ -243,6 +267,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
