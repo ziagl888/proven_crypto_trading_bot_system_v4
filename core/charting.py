@@ -588,7 +588,22 @@ def _trendbreaker_locked(
 
         ind = _fetch_indicators(symbol, "1h", limit=candles+10)
         if not ind.empty:
-            ind = ind.reindex(df.index, method="nearest", tolerance="1h")
+            # Use merge_asof for robust alignment — tolerates small timestamp
+            # differences between ohlcv_1h and indicators_1h tables.
+            # reindex with tolerance="1h" drops too many rows when timestamps
+            # differ by even a few seconds.
+            ind = pd.merge_asof(
+                df[[]],                          # just the index from df
+                ind.reset_index(),               # indicators with open_time col
+                left_index=True,
+                right_on="open_time",
+                tolerance=pd.Timedelta("90min"), # generous tolerance
+                direction="nearest",
+            ).set_index("open_time")
+            # Drop the empty columns from df[[]]
+            ind = ind.drop(columns=[c for c in ind.columns if c not in [
+                "ema_9","ema_21","ema_50","ema_200","rsi_14","tsi","tsi_signal"
+            ]], errors="ignore")
 
         fig = plt.figure(figsize=(20, 13), facecolor=BG)
         # 4 rows: main, RSI, TSI, x-label spacer (height 0)

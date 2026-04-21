@@ -518,7 +518,7 @@ def _poll_once(conn) -> None:
                        slope, intercept, trend_value,
                        break_price, break_time, distance_pct
                 FROM trendline_events
-                WHERE state IN ('DETECTED','WAITING_RETEST')
+                WHERE state IN ('DETECTED','WAITING_RETEST','RETEST')
                   AND trade_triggered = FALSE
                 ORDER BY created_at ASC
                 """
@@ -574,12 +574,15 @@ def _poll_once(conn) -> None:
             near_line = abs(dist_now) <= RETEST_BAND_PCT
 
             if near_line:
-                # Price is back near trendline — update state to show retest
+                # RETEST ALERT — fires ONCE only by transitioning state.
+                # WAITING_RETEST → RETEST prevents duplicate alerts on
+                # subsequent hourly scans while price stays near the line.
                 if state == "WAITING_RETEST":
                     with conn.cursor() as cur:
                         cur.execute(
                             """
                             UPDATE trendline_events SET
+                                state='RETEST',
                                 retest_price=%s, retest_time=NOW(),
                                 updated_at=NOW()
                             WHERE id=%s
@@ -587,8 +590,8 @@ def _poll_once(conn) -> None:
                             (last_close, ev_id),
                         )
                     conn.commit()
+                    state = "RETEST"  # update local var for rest of this iteration
 
-                    # Inform info channel
                     coin = symbol.replace("USDT","")
                     msg  = (
                         f"<pre><b>🔄 TRENDLINE RETEST</b>\n"
@@ -693,3 +696,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Trendbreaker Trader stopped (Ctrl+C).")
+
