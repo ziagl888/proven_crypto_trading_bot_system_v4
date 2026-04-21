@@ -182,18 +182,41 @@ def _expire_old_events(conn) -> None:
         conn.rollback()
 
 
+# Cooldown after a CONFIRMED or EXPIRED event — prevents re-alerting
+# the same coin/direction within a short time window.
+COOLDOWN_AFTER_BREAK_H  = 6    # hours after CONFIRMED/EXPIRED break
+COOLDOWN_AFTER_BOUNCE_H = 4    # hours after CONFIRMED/EXPIRED bounce
+
+
 def _already_active(conn, symbol: str, event_type: str) -> bool:
-    """Returns True if there's already an active event for this symbol+type."""
+    """
+    Returns True if this symbol+event_type should be suppressed:
+
+    1. An event is still ACTIVE (DETECTED or WAITING_RETEST) — never duplicate
+    2. A recent CONFIRMED or EXPIRED event exists within the cooldown window
+       — prevents the same coin from re-alerting immediately after resolution
+    """
+    cooldown_h = (
+        COOLDOWN_AFTER_BREAK_H
+        if "BREAK" in event_type
+        else COOLDOWN_AFTER_BOUNCE_H
+    )
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT 1 FROM trendline_events
                 WHERE symbol = %s AND event_type = %s
-                  AND state IN ('DETECTED','WAITING_RETEST')
+                  AND (
+                    state IN ('DETECTED','WAITING_RETEST')
+                    OR (
+                      state IN ('CONFIRMED','EXPIRED')
+                      AND updated_at >= NOW() - INTERVAL '%s hours'
+                    )
+                  )
                 LIMIT 1
                 """,
-                (symbol, event_type),
+                (symbol, event_type, cooldown_h),
             )
             return cur.fetchone() is not None
     except Exception:
@@ -489,4 +512,5 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Trendbreaker Detector stopped (Ctrl+C).")
+
 
