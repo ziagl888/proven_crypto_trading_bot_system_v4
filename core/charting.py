@@ -189,8 +189,15 @@ def _generate_locked(
                 )
                 ax_price.add_patch(rect)
 
-        # ── PRICE LINE removed — candlesticks only ───────────────────────────
+        # ── PRICE LINE (smoothed EWM) + fill ─────────────────────────────────
+        # V3 used 1min data → naturally smooth. V4 uses 5m → EWM span=3 smooths it.
+        price_smooth = price.ewm(span=3, adjust=False).mean()
         fill_color = "#00ff88" if is_up else "#ff3040"
+        ax_price.fill_between(
+            price_smooth.index, price_smooth, float(price_smooth.min()),
+            color=fill_color, alpha=0.12, zorder=2,
+        )
+        ax_price.plot(price_smooth.index, price_smooth, color="#00ffff", linewidth=2.0, zorder=3)
         ax_price.axhline(
             float(price.iloc[-1]),
             color="white", linewidth=1, linestyle="--", alpha=0.5, zorder=3.5,
