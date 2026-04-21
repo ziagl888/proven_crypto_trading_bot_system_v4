@@ -35,6 +35,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.ticker as mticker
+from matplotlib.dates import DateFormatter as _DateFormatter
 from matplotlib.patches import Rectangle
 from matplotlib.lines import Line2D
 import numpy as np
@@ -311,7 +312,7 @@ def _mini_locked(symbol, minutes, spike_start, spike_end, tick_data) -> str | No
                 pass
 
         _style_ax(ax_price)
-        ax_price.xaxis.set_major_formatter(mticker.DateFormatter("%H:%M"))
+        ax_price.xaxis.set_major_formatter(_DateFormatter("%H:%M"))
         ax_price.xaxis.set_major_locator(mticker.MaxNLocator(nbins=8, integer=True))
         ax_price.set_xlim(df.index[0], df.index[-1])
         p_range = float(price.max() - price.min())
@@ -471,7 +472,7 @@ def _pattern_locked(
         ax_vbar.set_xlim(ax_main.get_xlim())
         ax_vbar.set_ylabel("Vol", color="#4a6080", fontsize=8)
         _style_ax(ax_vbar, grid=False)
-        ax_vbar.xaxis.set_major_formatter(mticker.DateFormatter("%d.%m %H:%M"))
+        ax_vbar.xaxis.set_major_formatter(_DateFormatter("%d.%m %H:%M"))
         ax_vbar.xaxis.set_major_locator(mticker.MaxNLocator(nbins=7))
 
         _style_ax(ax_main)
@@ -702,7 +703,7 @@ def _trendbreaker_locked(
                                         color=BEAR, alpha=0.12)
         ax_tsi.axhline(0, color="#4a6080", linewidth=0.6, alpha=0.5)
         ax_tsi.set_ylabel("TSI", color="#4a6080", fontsize=8, labelpad=2)
-        ax_tsi.xaxis.set_major_formatter(mticker.DateFormatter("%d.%m %H:%M"))
+        ax_tsi.xaxis.set_major_formatter(_DateFormatter("%d.%m %H:%M"))
         ax_tsi.xaxis.set_major_locator(mticker.MaxNLocator(nbins=8))
         _style_ax(ax_tsi)
 
