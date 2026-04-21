@@ -578,19 +578,30 @@ def _poll_once(conn) -> None:
                 # WAITING_RETEST → RETEST prevents duplicate alerts on
                 # subsequent hourly scans while price stays near the line.
                 if state == "WAITING_RETEST":
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            """
-                            UPDATE trendline_events SET
-                                state='RETEST',
-                                retest_price=%s, retest_time=NOW(),
-                                updated_at=NOW()
-                            WHERE id=%s
-                            """,
-                            (last_close, ev_id),
-                        )
-                    conn.commit()
-                    state = "RETEST"  # update local var for rest of this iteration
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                """
+                                UPDATE trendline_events SET
+                                    state='RETEST',
+                                    retest_price=%s, retest_time=NOW(),
+                                    updated_at=NOW()
+                                WHERE id=%s
+                                """,
+                                (last_close, ev_id),
+                            )
+                        conn.commit()
+                        state = "RETEST"  # update local var for rest of this iteration
+                    except Exception as e:
+                        # Most likely: CHECK constraint missing RETEST state.
+                        # Run: python -c "from core.schema import create_all_tables; create_all_tables()"
+                        # to apply the schema migration.
+                        logger.error(f"Could not set RETEST state for event {ev_id}: {e}")
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                        continue  # skip this event this cycle — retry next poll
 
                     coin = symbol.replace("USDT","")
                     msg  = (
@@ -685,6 +696,8 @@ def main() -> None:
                 _poll_once(conn)
         except Exception as e:
             logger.error(f"Main loop error: {e}")
+            # Connection might be in failed transaction state — don't reuse it.
+            # db_connection() context manager creates a fresh connection each call.
 
         shutdown.sleep(POLL_INTERVAL_S)
 
@@ -696,4 +709,5 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Trendbreaker Trader stopped (Ctrl+C).")
+
 

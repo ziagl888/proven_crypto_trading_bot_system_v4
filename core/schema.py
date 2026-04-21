@@ -477,7 +477,7 @@ def _trade_tables_ddl() -> str:
                             )),
             state           TEXT        NOT NULL
                             CHECK (state IN (
-                                'DETECTED','WAITING_RETEST',
+                                'DETECTED','WAITING_RETEST','RETEST',
                                 'CONFIRMED','EXPIRED'
                             )),
             slope           REAL,
@@ -496,9 +496,30 @@ def _trade_tables_ddl() -> str:
         );
         CREATE INDEX IF NOT EXISTS idx_trendline_events_active
             ON trendline_events (state, symbol)
-            WHERE state IN ('DETECTED','WAITING_RETEST');
+            WHERE state IN ('DETECTED','WAITING_RETEST','RETEST');
         CREATE INDEX IF NOT EXISTS idx_trendline_events_symbol
             ON trendline_events (symbol, created_at DESC);
+
+        -- Migration: add RETEST to state CHECK constraint if it's missing.
+        -- DROP + re-ADD is the only way to alter a CHECK constraint in Postgres.
+        -- Safe to run multiple times (IF EXISTS guards).
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.constraint_column_usage
+                WHERE table_name = 'trendline_events'
+                  AND constraint_name = 'trendline_events_state_check'
+            ) THEN
+                ALTER TABLE trendline_events
+                    DROP CONSTRAINT IF EXISTS trendline_events_state_check;
+                ALTER TABLE trendline_events
+                    ADD CONSTRAINT trendline_events_state_check
+                    CHECK (state IN (
+                        'DETECTED','WAITING_RETEST','RETEST',
+                        'CONFIRMED','EXPIRED'
+                    ));
+            END IF;
+        END$$;
 
         -- ── Funding rates (written by 32_funding_monitor.py) ────────────────
         -- Stores every 5-min funding rate snapshot for all coins.
