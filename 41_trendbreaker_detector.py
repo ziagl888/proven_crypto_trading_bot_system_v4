@@ -184,42 +184,55 @@ def _expire_old_events(conn) -> None:
 
 # Cooldown after a CONFIRMED or EXPIRED event — prevents re-alerting
 # the same coin/direction within a short time window.
-COOLDOWN_AFTER_BREAK_H  = 6    # hours after CONFIRMED/EXPIRED break
-COOLDOWN_AFTER_BOUNCE_H = 4    # hours after CONFIRMED/EXPIRED bounce
+COOLDOWN_AFTER_BREAK_H  = 6    # hours cooldown after any break event expires
+COOLDOWN_AFTER_BOUNCE_H = 4    # hours cooldown after any bounce event expires
 
 
 def _already_active(conn, symbol: str, event_type: str) -> bool:
     """
-    Returns True if this symbol+event_type should be suppressed:
+    Returns True if this symbol+event_type should be suppressed.
 
-    1. An event is still ACTIVE (DETECTED or WAITING_RETEST) — never duplicate
-    2. A recent CONFIRMED or EXPIRED event exists within the cooldown window
-       — prevents the same coin from re-alerting immediately after resolution
+    Two independent checks:
+
+    1. EXACT MATCH — same symbol + same event_type is still active
+       (DETECTED or WAITING_RETEST) → never create a duplicate
+
+    2. SAME DIRECTION cooldown — any event of the same broad direction
+       (BREAK or BOUNCE) on this symbol was recently CONFIRMED or EXPIRED
+       → prevents rapid re-alerting after an event resolves
+
+       Direction grouping:
+         BREAK_UP / BREAK_DOWN  → "BREAK" group
+         BOUNCE_UP / BOUNCE_DOWN → "BOUNCE" group
+
+       Within-group cooldown: if BTCUSDT just had a BREAK_DOWN expire,
+       a new BREAK_UP is also blocked for cooldown_h hours.
+       This catches the common case of a coin oscillating around its
+       trendline and triggering alternating UP/DOWN alerts repeatedly.
     """
-    cooldown_h = (
-        COOLDOWN_AFTER_BREAK_H
-        if "BREAK" in event_type
-        else COOLDOWN_AFTER_BOUNCE_H
-    )
+    is_break   = "BREAK" in event_type
+    cooldown_h = COOLDOWN_AFTER_BREAK_H if is_break else COOLDOWN_AFTER_BOUNCE_H
+    # Match any event_type in the same group
+    group_types = ("BREAK_UP", "BREAK_DOWN") if is_break else ("BOUNCE_UP", "BOUNCE_DOWN")
+
     try:
         with conn.cursor() as cur:
-            # Use interval multiplication instead of INTERVAL '%s hours'
-            # because psycopg2 cannot substitute inside INTERVAL literals.
-            # NOW() - INTERVAL '1 hour' * N works correctly.
             cur.execute(
                 """
                 SELECT 1 FROM trendline_events
-                WHERE symbol = %s AND event_type = %s
+                WHERE symbol = %s
                   AND (
-                    state IN ('DETECTED','WAITING_RETEST')
-                    OR (
-                      state IN ('CONFIRMED','EXPIRED')
-                      AND updated_at >= NOW() - INTERVAL '1 hour' * %s
-                    )
+                    -- Check 1: exact match still active
+                    (event_type = %s AND state IN ('DETECTED','WAITING_RETEST'))
+                    OR
+                    -- Check 2: any same-group event recently expired/confirmed
+                    (event_type = ANY(%s)
+                     AND state IN ('CONFIRMED','EXPIRED')
+                     AND updated_at >= NOW() - INTERVAL '1 hour' * %s)
                   )
                 LIMIT 1
                 """,
-                (symbol, event_type, cooldown_h),
+                (symbol, event_type, list(group_types), cooldown_h),
             )
             return cur.fetchone() is not None
     except Exception as e:
@@ -516,6 +529,7 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Trendbreaker Detector stopped (Ctrl+C).")
+
 
 
 
