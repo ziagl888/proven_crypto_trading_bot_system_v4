@@ -141,11 +141,22 @@ def _load_altcoins() -> list[str]:
         return []
 
 
-def _classify_outcome(pnl_pct, close_reason: str = "") -> str:
-    """Returns 'win', 'loss', or 'neutral'."""
-    reason = (close_reason or "").upper()
-    if any(k in reason for k in ("DELISTED", "CLEANUP", "ORPHAN", "REGIME")):
+def _classify_outcome(pnl_pct, outcome_col: str = "") -> str:
+    """Returns 'win', 'loss', or 'neutral'.
+
+    V4: outcome column contains WIN/LOSS/BREAKEVEN directly.
+    Falls back to pnl_pct calculation if outcome column is not set.
+    """
+    # Use V4 outcome column directly when available
+    oc = (outcome_col or "").upper()
+    if oc == "WIN":
+        return "win"
+    if oc == "LOSS":
+        return "loss"
+    if oc == "BREAKEVEN":
         return "neutral"
+
+    # Fallback: calculate from pnl_pct (V3 trades + open trades)
     if pd.isna(pnl_pct):
         return "neutral"
     pnl = float(pnl_pct)
@@ -516,7 +527,7 @@ async def job_signal_summary() -> None:
                     opened_at       AS created_at,
                     closed_at,
                     status,
-                    close_reason,
+                    outcome,
                     pnl_r
                 FROM trades
                 WHERE opened_at >= %s OR closed_at >= %s
@@ -544,7 +555,7 @@ async def job_signal_summary() -> None:
     df.loc[df["status"] == "OPEN", "pnl_pct"] = pd.NA
 
     df["outcome"]  = df.apply(
-        lambda r: _classify_outcome(r["pnl_pct"], r.get("close_reason","") or ""),
+        lambda r: _classify_outcome(r["pnl_pct"], r.get("outcome","") or ""),
         axis=1,
     )
     df["is_win"]   = df["outcome"] == "win"
@@ -620,7 +631,7 @@ async def job_per_bot_performance() -> None:
                     opened_at       AS created_at,
                     closed_at,
                     status,
-                    close_reason,
+                    outcome,
                     tp_hit
                 FROM trades
                 WHERE entry IS NOT NULL
@@ -649,7 +660,7 @@ async def job_per_bot_performance() -> None:
     df.loc[~df["is_closed"], "pnl_pct"] = pd.NA
 
     df["outcome"] = df.apply(
-        lambda r: _classify_outcome(r["pnl_pct"], r.get("close_reason","") or "")
+        lambda r: _classify_outcome(r["pnl_pct"], r.get("outcome","") or "")
         if r["is_closed"] else "",
         axis=1,
     )
@@ -904,5 +915,6 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Market Tracker stopped (Ctrl+C).")
+
 
 
