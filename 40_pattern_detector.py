@@ -165,7 +165,9 @@ def _insert_breakout(conn, symbol: str, tf: str, pattern: str,
                 RETURNING id
                 """,
                 (symbol, tf, pattern, direction,
-                 break_price, slope_h, int_h, slope_l, int_l),
+                 float(break_price),
+                 float(slope_h), float(int_h),
+                 float(slope_l), float(int_l)),
             )
             row = cur.fetchone()
         conn.commit()
@@ -301,6 +303,11 @@ def _scan_symbol_tf(conn, symbol: str, tf: str,
     slope_l, int_l, _, _, _ = stats.linregress(
         recent_lo.astype(float), df["low"].values[recent_lo]
     )
+    # Cast numpy scalar → Python float to avoid psycopg2 "schema np" error
+    slope_h = float(slope_h)
+    int_h   = float(int_h)
+    slope_l = float(slope_l)
+    int_l   = float(int_l)
 
     avg_price   = float(df["close"].mean())
     slope_h_pct = (slope_h / avg_price) * 100
@@ -317,10 +324,10 @@ def _scan_symbol_tf(conn, symbol: str, tf: str,
     curr_idx = len(df) - 2   # last confirmed candle
     prev_idx = curr_idx - 1
 
-    up_curr = slope_h * curr_idx + int_h
-    lo_curr = slope_l * curr_idx + int_l
-    up_prev = slope_h * prev_idx + int_h
-    lo_prev = slope_l * prev_idx + int_l
+    up_curr = float(slope_h * curr_idx + int_h)
+    lo_curr = float(slope_l * curr_idx + int_l)
+    up_prev = float(slope_h * prev_idx + int_h)
+    lo_prev = float(slope_l * prev_idx + int_l)
 
     c_open  = float(df["open"].iloc[curr_idx])
     c_close = float(df["close"].iloc[curr_idx])
@@ -506,3 +513,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Pattern Detector stopped (Ctrl+C).")
+
