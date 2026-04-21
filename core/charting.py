@@ -566,12 +566,19 @@ def _trendbreaker_locked(
 ) -> str | None:
     fig = None
     try:
-        df = _fetch_ohlcv(symbol, "1h", limit=candles+10)
-        if df.empty or len(df) < 20:
+        # Load FULL 90d dataset — same as detector uses.
+        # slope+intercept are index-based on this full dataset.
+        # We then xlim to the last `candles` bars for display.
+        df_full = _fetch_ohlcv(symbol, "1h", limit=2200)
+        if df_full.empty or len(df_full) < 20:
             return None
 
-        df     = df.tail(candles).copy()
-        n      = len(df)
+        n_full = len(df_full)
+
+        # Display window: last `candles` bars
+        display_start = max(0, n_full - candles)
+        df    = df_full.iloc[display_start:].copy()
+        n     = len(df)
         price  = df["close"]
         volume = df["volume"]
         last_p = float(price.iloc[-1])
@@ -611,11 +618,13 @@ def _trendbreaker_locked(
                         ax_main.plot(s.index, s, color=color, linewidth=lw,
                                      alpha=0.70, zorder=4.5, label=label)
 
-        # Trendline
+        # Trendline — use GLOBAL indices (same as detector used for regression)
+        # display_start is the global index of the first visible candle
         td    = df.index[1] - df.index[0] if n > 1 else pd.Timedelta(hours=1)
         t_ext = [df.index[-1] + td*(i+1) for i in range(8)]
         t_all = list(df.index) + t_ext
-        x_all = np.arange(len(t_all))
+        # x_all maps each timestamp to its GLOBAL index in the full 90d dataset
+        x_all = np.arange(display_start, display_start + len(t_all))
         y_tl  = slope * x_all + intercept
 
         tl_color = BULL if is_up else BEAR
@@ -645,7 +654,7 @@ def _trendbreaker_locked(
 
         # Break/bounce marker
         last_ts    = df.index[-1]
-        tl_at_last = float(slope*(n-1) + intercept)
+        tl_at_last = float(slope*(n_full-1) + intercept)
         if "BREAK" in event_type:
             mkr = "^" if is_up else "v"
             ax_main.scatter([last_ts], [last_p], color=tl_color, s=200,
