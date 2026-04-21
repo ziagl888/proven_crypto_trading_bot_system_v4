@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 from core.database import db_connection
 from core.schema import verify_schema
 from core.shutdown import ShutdownHandler
-from core.charting import generate_chart
+from core.charting import generate_pattern_chart
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -349,7 +349,11 @@ def _scan_symbol_tf(conn, symbol: str, tf: str,
         )
         if ev_id:
             active_ids.add(pattern_id)
-            chart = generate_chart(symbol, minutes=240)
+            chart = generate_pattern_chart(
+                symbol, tf, pattern, breakout_dir,
+                slope_h, int_h, slope_l, int_l,
+                event_state="BREAKOUT", break_price=c_close,
+            )
             coin  = symbol.replace("USDT","")
             emoji = "🟢" if breakout_dir == "BULLISH" else "🔴"
             msg   = (
@@ -397,7 +401,11 @@ def _scan_symbol_tf(conn, symbol: str, tf: str,
             (not is_bullish and c_close > line * (1 + RETEST_FAIL_PCT))):
         _mark_fakeout(conn, ev_id)
         active_ids.discard(pattern_id)
-        chart = generate_chart(symbol, minutes=240)
+        chart = generate_pattern_chart(
+            symbol, tf, pattern, direction,
+            slope_h, int_h, slope_l, int_l,
+            event_state="FAKEOUT",
+        )
         coin  = symbol.replace("USDT","")
         msg   = (
             f"<pre><b>❌ FAKEOUT</b>\n"
@@ -421,7 +429,12 @@ def _scan_symbol_tf(conn, symbol: str, tf: str,
 
     if touched and closed_correct and state == "WAITING_RETEST":
         _mark_retest(conn, ev_id, float((c_high + c_low) / 2))
-        chart = generate_chart(symbol, minutes=240)
+        chart = generate_pattern_chart(
+            symbol, tf, pattern, direction,
+            slope_h, int_h, slope_l, int_l,
+            event_state="RETEST",
+            retest_price=(c_high + c_low) / 2,
+        )
         coin  = symbol.replace("USDT","")
         retest_price = (c_high + c_low) / 2
         msg   = (
@@ -513,4 +526,5 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Pattern Detector stopped (Ctrl+C).")
+
 

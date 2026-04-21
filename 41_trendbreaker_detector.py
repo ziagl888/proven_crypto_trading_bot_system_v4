@@ -65,7 +65,7 @@ from core.config import ATB1_CHANNEL_ID
 from core.database import db_connection
 from core.schema import verify_schema
 from core.shutdown import ShutdownHandler
-from core.charting import generate_chart
+from core.charting import generate_trendbreaker_chart
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -311,7 +311,10 @@ def _scan_symbol(conn, symbol: str) -> None:
             last_close, dist_last * 100, vol_r,
         )
         if event_id:
-            chart = generate_chart(symbol, minutes=240)
+            chart = generate_trendbreaker_chart(
+                symbol, trend_dir, slope, intercept, "BREAK_UP",
+                distance_pct=dist_last*100, volume_ratio=vol_r,
+            )
             coin  = symbol.replace("USDT","")
             msg   = (
                 f"<pre><b>🚀 TRENDLINE BREAK UP</b>\n"
@@ -336,7 +339,10 @@ def _scan_symbol(conn, symbol: str) -> None:
             last_close, dist_last * 100, vol_r,
         )
         if event_id:
-            chart = generate_chart(symbol, minutes=240)
+            chart = generate_trendbreaker_chart(
+                symbol, trend_dir, slope, intercept, "BREAK_DOWN",
+                distance_pct=dist_last*100, volume_ratio=vol_r,
+            )
             coin  = symbol.replace("USDT","")
             msg   = (
                 f"<pre><b>💥 TRENDLINE BREAK DOWN</b>\n"
@@ -367,7 +373,10 @@ def _scan_symbol(conn, symbol: str) -> None:
                 last_close, dist_last * 100, vol_r,
             )
             if event_id:
-                chart = generate_chart(symbol, minutes=240)
+                chart = generate_trendbreaker_chart(
+                    symbol, trend_dir, slope, intercept, "BOUNCE_UP",
+                    distance_pct=dist_last*100, volume_ratio=vol_r,
+                )
                 coin  = symbol.replace("USDT","")
                 msg   = (
                     f"<pre><b>🔄 TRENDLINE BOUNCE UP</b>\n"
@@ -391,7 +400,10 @@ def _scan_symbol(conn, symbol: str) -> None:
                 last_close, dist_last * 100, vol_r,
             )
             if event_id:
-                chart = generate_chart(symbol, minutes=240)
+                chart = generate_trendbreaker_chart(
+                    symbol, trend_dir, slope, intercept, "BOUNCE_DOWN",
+                    distance_pct=dist_last*100, volume_ratio=vol_r,
+                )
                 coin  = symbol.replace("USDT","")
                 msg   = (
                     f"<pre><b>🔄 TRENDLINE BOUNCE DOWN</b>\n"
@@ -477,3 +489,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Trendbreaker Detector stopped (Ctrl+C).")
+
