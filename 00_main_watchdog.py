@@ -69,6 +69,12 @@ PROCESSES: list[dict] = [
     {"name": "Market Tracker",    "script": "31_market_tracker.py",   "start_delay": 30, "restart_interval": None},
     # ── Trade management ──────────────────────────────────────────────
     {"name": "Trade Monitor",     "script": "21_trade_monitor.py",    "start_delay": 35, "restart_interval": None},
+    # ── Detectors (4x) ───────────────────────────────────────────────
+    {"name": "Pattern Detector",  "script": "40_pattern_detector.py",     "start_delay": 40, "restart_interval": None},
+    {"name": "Trendbreaker Det.", "script": "41_trendbreaker_detector.py", "start_delay": 45, "restart_interval": None},
+    # ── Traders (5x) ─────────────────────────────────────────────────
+    {"name": "Pattern Trader",    "script": "50_pattern_trader.py",        "start_delay": 50, "restart_interval": None},
+    {"name": "Trendbreaker Trd.", "script": "51_trendbreaker_trader.py",   "start_delay": 55, "restart_interval": None},
 ]
 
 # ── Shutdown coordination ─────────────────────────────────────────────────────
@@ -247,6 +253,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 

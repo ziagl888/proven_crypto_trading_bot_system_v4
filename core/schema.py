@@ -633,9 +633,20 @@ def migrate_schema() -> None:
     from the actual DB tables. Safe to run repeatedly — uses
     IF NOT EXISTS for each ALTER TABLE.
 
+    Also ensures detector tables (pattern_events, trendline_events) and
+    trade tables exist — safe to call on running systems.
+
     Call this after create_all_tables() to handle schema upgrades
     without dropping and recreating tables (which would lose all data).
     """
+    # Ensure all non-OHLCV tables exist (idempotent — uses IF NOT EXISTS)
+    with db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_infrastructure_tables_ddl())
+            cur.execute(_trade_tables_ddl())
+        conn.commit()
+        logger.info("Infrastructure + trade + detector tables ensured.")
+
     with db_connection() as conn:
         with conn.cursor() as cur:
             for tf in INDICATOR_TIMEFRAMES:
