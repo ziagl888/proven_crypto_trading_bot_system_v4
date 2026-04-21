@@ -83,7 +83,9 @@ MIS_CHANNELS = {
 
 # AI bots
 ATS1_CHANNEL_ID   = _int("ATS1_CHANNEL_ID",   0)   # ATS-1
-ATB1_CHANNEL_ID   = _int("ATB1_CHANNEL_ID",   0)   # ATB-1
+ATB1_CHANNEL_ID         = _int("ATB1_CHANNEL_ID",         0)   # ATB-1 trade channel
+ATB1_INFO_CHANNEL_ID    = _int("ATB1_INFO_CHANNEL_ID",    0)   # ATB-1 info/detection channel
+PATTERN_INFO_CHANNEL_ID = _int("PATTERN_INFO_CHANNEL_ID", 0)   # Pattern Detector info channel
 AIM1_CHANNEL_ID   = _int("AIM1_CHANNEL_ID",   0)   # AIM-1
 ABR1_CHANNEL_ID   = _int("ABR1_CHANNEL_ID",   0)   # ABR-1
 RUB1_CHANNEL_ID   = _int("RUB1_CHANNEL_ID",   0)   # RUB-1
@@ -125,6 +127,7 @@ MAIN_CHANNEL_COINS = [
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 DASHBOARD_PORT = _int("DASHBOARD_PORT", 5000)
+
 
 
 

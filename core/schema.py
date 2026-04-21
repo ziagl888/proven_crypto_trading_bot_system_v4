@@ -434,6 +434,71 @@ def _trade_tables_ddl() -> str:
         );
         CREATE INDEX IF NOT EXISTS idx_pde_symbol_time
             ON pump_dump_events (symbol, detected_at DESC);
+
+        -- ── Pattern Detector events (written by 40_pattern_detector.py) ──────
+        CREATE TABLE IF NOT EXISTS pattern_events (
+            id              SERIAL PRIMARY KEY,
+            symbol          TEXT        NOT NULL,
+            timeframe       TEXT        NOT NULL,
+            pattern         TEXT        NOT NULL,
+            direction       TEXT,
+            state           TEXT        NOT NULL
+                            CHECK (state IN (
+                                'BREAKOUT','WAITING_RETEST','RETEST',
+                                'CONFIRMED','FAKEOUT','EXPIRED'
+                            )),
+            break_price     REAL,
+            break_time      TIMESTAMPTZ,
+            slope_high      REAL,
+            intercept_high  REAL,
+            slope_low       REAL,
+            intercept_low   REAL,
+            retest_price    REAL,
+            retest_time     TIMESTAMPTZ,
+            trade_triggered BOOLEAN     DEFAULT FALSE,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_pattern_events_active
+            ON pattern_events (state, symbol)
+            WHERE state IN ('BREAKOUT','WAITING_RETEST','RETEST');
+        CREATE INDEX IF NOT EXISTS idx_pattern_events_symbol
+            ON pattern_events (symbol, created_at DESC);
+
+        -- ── Trendline Detector events (written by 41_trendbreaker_detector.py) ─
+        CREATE TABLE IF NOT EXISTS trendline_events (
+            id              SERIAL PRIMARY KEY,
+            symbol          TEXT        NOT NULL,
+            trend_direction TEXT        NOT NULL,
+            event_type      TEXT        NOT NULL
+                            CHECK (event_type IN (
+                                'BREAK_UP','BREAK_DOWN',
+                                'BOUNCE_UP','BOUNCE_DOWN'
+                            )),
+            state           TEXT        NOT NULL
+                            CHECK (state IN (
+                                'DETECTED','WAITING_RETEST',
+                                'CONFIRMED','EXPIRED'
+                            )),
+            slope           REAL,
+            intercept       REAL,
+            trend_value     REAL,
+            break_price     REAL,
+            break_time      TIMESTAMPTZ,
+            distance_pct    REAL,
+            volume_ratio    REAL,
+            retest_price    REAL,
+            retest_time     TIMESTAMPTZ,
+            ml_score        REAL,
+            trade_triggered BOOLEAN     DEFAULT FALSE,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_trendline_events_active
+            ON trendline_events (state, symbol)
+            WHERE state IN ('DETECTED','WAITING_RETEST');
+        CREATE INDEX IF NOT EXISTS idx_trendline_events_symbol
+            ON trendline_events (symbol, created_at DESC);
     """
 
 
@@ -624,6 +689,7 @@ def verify_schema() -> dict:
             "system_state",
             "trades", "signal_log", "bot_performance", "v3_migration_log",
             "pump_dump_events",
+            "pattern_events", "trendline_events",
         ]
     )
     missing, ok = [], []
@@ -633,6 +699,7 @@ def verify_schema() -> dict:
                 cur.execute("SELECT to_regclass(%s)", (tname,))
                 (missing if cur.fetchone()[0] is None else ok).append(tname)
     return {"ok": ok, "missing": missing}
+
 
 
 
