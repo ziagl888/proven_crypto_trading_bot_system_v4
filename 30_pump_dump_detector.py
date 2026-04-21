@@ -306,7 +306,8 @@ def _check_round_levels(symbol: str, current_price: float,
         f"</pre>"
     )
 
-    chart_path = generate_chart(symbol, minutes=240)
+    tick_data = list(_CANDLES.get(symbol, []))
+    chart_path = generate_chart(symbol, minutes=240, tick_data=tick_data)
     _send_outbox(PUMP_DUMP_MARKET_CHANNEL_ID, msg, chart_path)
     logger.info(f"ROUND LEVEL: {symbol} crossed {crossed_level} {direction}")
 
@@ -371,7 +372,8 @@ def _check_price_moves(symbol: str, data: list, now: datetime.datetime,
             f"</pre>"
         )
 
-        chart_path = generate_chart(symbol, minutes=240)
+        tick_data = list(_CANDLES.get(symbol, []))
+        chart_path = generate_chart(symbol, minutes=240, tick_data=tick_data)
         _send_outbox(PUMP_DUMP_MARKET_CHANNEL_ID, msg, chart_path)
 
         extend = abs(chg_pct) >= 10.0
@@ -441,7 +443,8 @@ def _check_volume_explosion(symbol: str, data: list, now: datetime.datetime,
         f"</pre>"
     )
 
-    chart_path = generate_chart(symbol, minutes=240)
+    tick_data = list(_CANDLES.get(symbol, []))
+    chart_path = generate_chart(symbol, minutes=240, tick_data=tick_data)
     _send_outbox(PUMP_DUMP_MARKET_CHANNEL_ID, msg, chart_path)
     _log_event(symbol, f"VOLUME_{matched_label.split()[0]}", current_price, p_chg, vol_ratio)
     logger.info(f"VOLUME ALERT: {symbol} {vol_ratio:.1f}x avg (price {p_chg:+.2f}%)")

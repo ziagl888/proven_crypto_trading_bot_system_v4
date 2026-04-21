@@ -84,6 +84,7 @@ def generate_chart(
     minutes: int = 240,
     spike_start=None,
     spike_end=None,
+    tick_data: list | None = None,
 ) -> str | None:
     """
     Generates a mini-chart image for the given symbol.
@@ -101,7 +102,7 @@ def generate_chart(
     with _CHART_LOCK:
         # Try requested window, fall back to shorter windows if not enough data
         for try_minutes in [minutes, 120, 60, 30]:
-            path = _generate_locked(symbol, try_minutes, spike_start, spike_end)
+            path = _generate_locked(symbol, try_minutes, spike_start, spike_end, tick_data)
             if path:
                 logger.info(f"Chart generated: {path}")
                 return path
@@ -114,6 +115,7 @@ def _generate_locked(
     minutes: int,
     spike_start,
     spike_end,
+    tick_data: list | None = None,
 ) -> str | None:
     """Internal implementation — must be called inside _CHART_LOCK."""
     fig = None
@@ -207,6 +209,36 @@ def _generate_locked(
             zorder=4,
         )
 
+        # ── TICK DATA LINE (10s buckets from PD-1) ───────────────────────────
+        if tick_data:
+            try:
+                chart_start = df.index[0]
+                tick_rows = []
+                for entry in tick_data:
+                    try:
+                        ts = pd.Timestamp(
+                            entry["t"].replace("Z", "+00:00")
+                        ).tz_convert("UTC")
+                        p = float(entry["p"])
+                        if ts >= chart_start and p > 0:
+                            tick_rows.append((ts, p))
+                    except Exception:
+                        continue
+                if tick_rows:
+                    tick_rows.sort(key=lambda x: x[0])
+                    tick_ts = [r[0] for r in tick_rows]
+                    tick_px = [r[1] for r in tick_rows]
+                    ax_price.plot(
+                        tick_ts, tick_px,
+                        color="#00ffff", linewidth=1.5,
+                        alpha=0.9, zorder=5,
+                    )
+                    # Extend x-axis to last tick if newer than last candle
+                    if tick_ts[-1] > df.index[-1]:
+                        ax_price.set_xlim(df.index[0], tick_ts[-1])
+            except Exception as e:
+                logger.debug(f"Tick line error: {e}")
+
         # ── SPIKE HIGHLIGHT ───────────────────────────────────────────────────
         if spike_start is not None and spike_end is not None:
             try:
@@ -298,4 +330,5 @@ def _generate_locked(
         if fig is not None:
             plt.close(fig)
         plt.close("all")
+
 
