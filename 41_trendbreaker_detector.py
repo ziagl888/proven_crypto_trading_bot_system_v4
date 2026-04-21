@@ -510,16 +510,25 @@ def main() -> None:
     logger.info(f"Schema OK — {len(schema['ok'])} tables verified.")
 
     shutdown = ShutdownHandler("ATB_DETECT")
-    logger.info("Waiting for :03 of each hour to scan...")
+
+    # Event-driven: wait for indicators_1h_done signal from 12_indicator_engine.
+    # This guarantees we scan AFTER fresh 1h indicators are written — never before.
+    from core.system_state import get_state, KEY_INDICATORS_1H_DONE
+    logger.info("Waiting for indicators_1h_done signal from indicator engine...")
+    _last_seen = get_state(KEY_INDICATORS_1H_DONE) or ""
 
     while not shutdown.is_set():
-        now = datetime.datetime.now(datetime.timezone.utc)
-        if now.minute == 3:
+        try:
+            sig = get_state(KEY_INDICATORS_1H_DONE) or ""
+        except Exception:
+            sig = _last_seen
+
+        if sig and sig != _last_seen:
+            _last_seen = sig
+            logger.info(f"Signal received ({sig}) — starting trendbreaker scan...")
             _run_scan()
-            # Sleep past the trigger minute
-            shutdown.sleep(90)
-        else:
-            shutdown.sleep(10)
+
+        shutdown.sleep(15)
 
     logger.info("Trendbreaker Detector stopped.")
 
@@ -529,6 +538,7 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Trendbreaker Detector stopped (Ctrl+C).")
+
 
 
 

@@ -1008,6 +1008,18 @@ def _run_cycle_and_bots(tf: str, symbols: list[str], closed_at: datetime.datetim
         with _CYCLE_SEMAPHORE:
             run_indicator_cycle(tf, symbols)
             _LAST_PROCESSED[tf] = closed_at
+
+        # Signal downstream detectors (40, 41) that fresh 1h indicators are ready.
+        # They wait on this key instead of triggering blindly at :03.
+        if tf == "1h":
+            try:
+                from core.system_state import set_state, KEY_INDICATORS_1H_DONE
+                set_state(KEY_INDICATORS_1H_DONE,
+                          closed_at.strftime("%Y-%m-%dT%H:%M:%SZ"))
+                logger.info("[1h] Wrote indicators_1h_done signal for detectors.")
+            except Exception as e:
+                logger.warning(f"[1h] Could not write indicators_1h_done: {e}")
+
         run_bots_for_timeframe(tf)
     except Exception as e:
         logger.error(f"[{tf}] Cycle+bots error: {e}")
@@ -1029,6 +1041,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 

@@ -13,7 +13,8 @@ from core.database import db_connection
 logger = logging.getLogger(__name__)
 
 # ── Known keys ────────────────────────────────────────────────────────────────
-KEY_BACKFILL_DONE = "initial_backfill_done"
+KEY_BACKFILL_DONE      = "initial_backfill_done"
+KEY_INDICATORS_1H_DONE = "indicators_1h_done"    # written by 12_indicator_engine after each 1h cycle
 
 
 def set_state(key: str, value: str = "true") -> None:
@@ -99,4 +100,5 @@ def wait_for(
         except (KeyboardInterrupt, SystemExit):
             logger.info(f"wait_for({key!r}) interrupted — shutting down.")
             return False
+
 
