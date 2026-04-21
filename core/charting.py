@@ -396,7 +396,7 @@ def _pattern_locked(
         last_p = float(price.iloc[-1])
         is_bull = direction == "BULLISH"
 
-        fig = plt.figure(figsize=(18, 10), facecolor=BG)
+        fig = plt.figure(figsize=(18, 8), facecolor=BG)
         gs  = fig.add_gridspec(2, 2,
                                height_ratios=[5, 1],
                                width_ratios=[4, 1],
@@ -411,14 +411,42 @@ def _pattern_locked(
         _draw_price_line(ax_main, price)
         _draw_price_tag(ax_main, last_p)
 
-        # ── Trendlines (project +10 candles forward) ──────────────────────────
-        td     = df.index[1] - df.index[0] if n > 1 else pd.Timedelta(hours=1)
-        t_ext  = [df.index[-1] + td*(i+1) for i in range(10)]
-        t_all  = list(df.index) + t_ext
+        # ── Trendlines ─────────────────────────────────────────────────────────
+        # CRITICAL: slope+intercept from detector use that df's local indices.
+        # We must recalculate trendlines using THIS df's pivot points.
+        td    = df.index[1] - df.index[0] if n > 1 else pd.Timedelta(hours=1)
+        t_ext = [df.index[-1] + td*(i+1) for i in range(10)]
+        t_all = list(df.index) + t_ext
         x_proj = np.arange(len(t_all))
 
-        y_high = slope_high * x_proj + intercept_high
-        y_low  = slope_low  * x_proj + intercept_low
+        from scipy.signal import argrelextrema as _are
+        from scipy.stats import linregress as _lr
+        import numpy as _np2
+
+        _order = max(3, n // 20)
+        _hi = _are(df["high"].values, _np2.greater, order=_order)[0]
+        _lo = _are(df["low"].values,  _np2.less,    order=_order)[0]
+
+        # Fit trendlines to local pivot points
+        def _tl(idx_arr, vals):
+            if len(idx_arr) >= 2:
+                s, b, *_ = _lr(idx_arr[-3:].astype(float), vals[idx_arr[-3:]])
+                return float(s), float(b)
+            return None, None
+
+        sh, bh = _tl(_hi, df["high"].values)
+        sl2, bl = _tl(_lo, df["low"].values)
+
+        if sh is not None:
+            y_high = sh * x_proj + bh
+        else:
+            # Fallback: flat line at max high of recent pivots or overall high
+            y_high = _np2.full(len(x_proj), float(df["high"].iloc[-20:].max()))
+
+        if sl2 is not None:
+            y_low = sl2 * x_proj + bl
+        else:
+            y_low = _np2.full(len(x_proj), float(df["low"].iloc[-20:].min()))
 
         ul_color = ACC1 if not is_bull else "#ffb74d"
         ax_main.plot(t_all, y_high, color=ul_color, linewidth=2.0,
