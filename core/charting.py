@@ -447,9 +447,9 @@ def _pattern_locked(
         state_colors = {
             "BREAKOUT":       (ACC1,    "BREAKOUT"),
             "WAITING_RETEST": ("#42a5f5","WAITING RETEST"),
-            "RETEST":         (PRICE_L, "🔄 RETEST"),
-            "CONFIRMED":      (BULL,    "✅ CONFIRMED"),
-            "FAKEOUT":        (BEAR,    "❌ FAKEOUT"),
+            "RETEST":         (PRICE_L, "~ RETEST"),
+            "CONFIRMED":      (BULL,    "OK CONFIRMED"),
+            "FAKEOUT":        (BEAR,    "XX FAKEOUT"),
             "EXPIRED":        ("#555",  "EXPIRED"),
         }
         badge_col, badge_txt = state_colors.get(event_state, (ACC1, event_state))
@@ -485,7 +485,7 @@ def _pattern_locked(
         y_lo, y_hi = ax_main.get_ylim()
         _draw_vbp(ax_vbp, price, volume, y_lo, y_hi)
 
-        dir_emoji = "🟢" if is_bull else "🔴"
+        dir_emoji = "[BULL]" if is_bull else "[BEAR]"
         coin = symbol.replace("USDT","")
         _header_bar(
             fig,
@@ -648,10 +648,10 @@ def _trendbreaker_locked(
 
         # Badge
         badge_map = {
-            "BREAK_UP":   (BULL, "⚡ BREAK UP"),
-            "BREAK_DOWN": (BEAR, "⚡ BREAK DOWN"),
-            "BOUNCE_UP":  (BULL, "🔄 BOUNCE UP"),
-            "BOUNCE_DOWN":(BEAR, "🔄 BOUNCE DOWN"),
+            "BREAK_UP":   (BULL, ">> BREAK UP"),
+            "BREAK_DOWN": (BEAR, ">> BREAK DOWN"),
+            "BOUNCE_UP":  (BULL, "~ BOUNCE UP"),
+            "BOUNCE_DOWN":(BEAR, "~ BOUNCE DOWN"),
         }
         badge_col, badge_txt = badge_map.get(event_type, (ACC1, event_type))
         ax_main.text(0.99, 0.97, badge_txt,
