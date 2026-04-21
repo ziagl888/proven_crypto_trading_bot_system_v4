@@ -67,6 +67,8 @@ PROCESSES: list[dict] = [
     # ── Market monitoring ─────────────────────────────────────────────
     {"name": "Pump/Dump Detector","script": "30_pump_dump_detector.py","start_delay": 25, "restart_interval": None},
     {"name": "Market Tracker",    "script": "31_market_tracker.py",   "start_delay": 30, "restart_interval": None},
+    {"name": "Funding Monitor",   "script": "32_funding_monitor.py",  "start_delay": 32, "restart_interval": None},
+    {"name": "Whale Monitor",     "script": "33_whale_monitor.py",    "start_delay": 34, "restart_interval": None},
     # ── Trade management ──────────────────────────────────────────────
     {"name": "Trade Monitor",     "script": "21_trade_monitor.py",    "start_delay": 35, "restart_interval": None},
     # ── Detectors (4x) ───────────────────────────────────────────────

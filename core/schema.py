@@ -499,6 +499,37 @@ def _trade_tables_ddl() -> str:
             WHERE state IN ('DETECTED','WAITING_RETEST');
         CREATE INDEX IF NOT EXISTS idx_trendline_events_symbol
             ON trendline_events (symbol, created_at DESC);
+
+        -- ── Funding rates (written by 32_funding_monitor.py) ────────────────
+        -- Stores every 5-min funding rate snapshot for all coins.
+        -- 573 coins × 288 polls/day = ~165k rows/day, ~500k rows per 3 days.
+        -- TimescaleDB hypertable with 1-day chunks + compression recommended.
+        CREATE TABLE IF NOT EXISTS funding_rates (
+            symbol      TEXT        NOT NULL,
+            ts          TIMESTAMPTZ NOT NULL,
+            rate        REAL        NOT NULL,   -- raw rate, e.g. 0.0001 = 0.01%
+            PRIMARY KEY (symbol, ts)
+        );
+        CREATE INDEX IF NOT EXISTS idx_funding_symbol_ts
+            ON funding_rates (symbol, ts DESC);
+
+        -- ── Whale trades (written by 33_whale_monitor.py) ───────────────────
+        -- Stores individual aggTrade records above MIN_USD threshold ($25k).
+        -- Estimated volume: depends on market activity.
+        -- Retention: 3 days (housekeeping purges older rows nightly).
+        CREATE TABLE IF NOT EXISTS whale_trades (
+            id          BIGSERIAL   PRIMARY KEY,
+            symbol      TEXT        NOT NULL,
+            ts          TIMESTAMPTZ NOT NULL,
+            direction   TEXT        NOT NULL CHECK (direction IN ('LONG','SHORT')),
+            usd_value   REAL        NOT NULL,   -- notional USD value
+            price       REAL        NOT NULL,
+            qty         REAL        NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_whale_symbol_ts
+            ON whale_trades (symbol, ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_whale_ts
+            ON whale_trades (ts DESC);
     """
 
 
@@ -701,6 +732,7 @@ def verify_schema() -> dict:
             "trades", "signal_log", "bot_performance", "v3_migration_log",
             "pump_dump_events",
             "pattern_events", "trendline_events",
+            "funding_rates", "whale_trades",
         ]
     )
     missing, ok = [], []
@@ -710,6 +742,7 @@ def verify_schema() -> dict:
                 cur.execute("SELECT to_regclass(%s)", (tname,))
                 (missing if cur.fetchone()[0] is None else ok).append(tname)
     return {"ok": ok, "missing": missing}
+
 
 
 

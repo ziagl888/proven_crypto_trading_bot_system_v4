@@ -61,6 +61,7 @@ PUMP_DUMP_AI_CHANNEL_ID     = _int("PUMP_DUMP_AI_CHANNEL_ID",     0)
 
 # Market Tracker (hourly reports, gainers/losers, volume)
 SENTIMENT_CHANNEL_ID        = _int("SENTIMENT_CHANNEL_ID",        0)
+MARKET_MONITOR_CHANNEL_ID   = _int("MARKET_MONITOR_CHANNEL_ID",   0)   # Funding + Whale shared channel
 
 # Regime Orchestrator
 REGIME_TRADING_CHANNEL_ID   = _int("REGIME_TRADING_CHANNEL_ID",   0)
@@ -127,6 +128,7 @@ MAIN_CHANNEL_COINS = [
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 DASHBOARD_PORT = _int("DASHBOARD_PORT", 5000)
+
 
 
 
