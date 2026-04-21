@@ -510,7 +510,9 @@ def _pattern_locked(
         _style_ax(ax_main)
         ax_main.set_xlim(df.index[0], t_all[-1])
         y_lo, y_hi = ax_main.get_ylim()
+        # VBP spans full height — disable axes for RSI/TSI rows of sidebar
         _draw_vbp(ax_vbp, price, volume, y_lo, y_hi)
+        ax_vbp.set_facecolor(PANEL_BG)
 
         dir_emoji = "[BULL]" if is_bull else "[BEAR]"
         coin = symbol.replace("USDT","")
@@ -588,14 +590,16 @@ def _trendbreaker_locked(
         if not ind.empty:
             ind = ind.reindex(df.index, method="nearest", tolerance="1h")
 
-        fig = plt.figure(figsize=(20, 12), facecolor=BG)
+        fig = plt.figure(figsize=(20, 13), facecolor=BG)
+        # 4 rows: main, RSI, TSI, x-label spacer (height 0)
+        # Col 0 = chart (wide), Col 1 = VBP sidebar (narrow, spans rows 0-2)
         gs  = fig.add_gridspec(3, 2,
-                               height_ratios=[5, 1.2, 1.2],
+                               height_ratios=[5, 1.5, 1.5],
                                width_ratios=[4, 1],
-                               hspace=0.06, wspace=0.04)
+                               hspace=0.12, wspace=0.04)
         ax_main = fig.add_subplot(gs[0, 0])
         ax_vol  = ax_main.twinx()
-        ax_vbp  = fig.add_subplot(gs[0, 1])
+        ax_vbp  = fig.add_subplot(gs[:, 1])   # VBP spans all 3 rows
         ax_rsi  = fig.add_subplot(gs[1, 0], sharex=ax_main)
         ax_tsi  = fig.add_subplot(gs[2, 0], sharex=ax_main)
 
@@ -722,7 +726,8 @@ def _trendbreaker_locked(
                 ax_rsi.fill_between(rsi.index, rsi, 50,
                                     where=rsi < 50, color=BEAR, alpha=0.07)
         ax_rsi.set_ylim(0, 100)
-        ax_rsi.set_ylabel("RSI", color="#4a6080", fontsize=8, labelpad=2)
+        ax_rsi.set_yticks([30, 70])
+        ax_rsi.set_ylabel("RSI", color=RSI_COL, fontsize=9, labelpad=4)
         _style_ax(ax_rsi)
 
         # TSI panel
@@ -743,15 +748,18 @@ def _trendbreaker_locked(
                     ax_tsi.fill_between(common, t_c, s_c, where=t_c<s_c,
                                         color=BEAR, alpha=0.12)
         ax_tsi.axhline(0, color="#4a6080", linewidth=0.6, alpha=0.5)
-        ax_tsi.set_ylabel("TSI", color="#4a6080", fontsize=8, labelpad=2)
+        ax_tsi.set_ylabel("TSI", color=TSI_COL, fontsize=9, labelpad=4)
         ax_tsi.xaxis.set_major_formatter(_DateFormatter("%d.%m %H:%M"))
         ax_tsi.xaxis.set_major_locator(mticker.MaxNLocator(nbins=8))
+        plt.setp(ax_tsi.get_xticklabels(), rotation=0, ha="center", fontsize=8)
         _style_ax(ax_tsi)
 
         _style_ax(ax_main)
         ax_main.set_xlim(df.index[0], t_all[-1])
         y_lo, y_hi = ax_main.get_ylim()
+        # VBP spans full height — disable axes for RSI/TSI rows of sidebar
         _draw_vbp(ax_vbp, price, volume, y_lo, y_hi)
+        ax_vbp.set_facecolor(PANEL_BG)
 
         plt.setp(ax_main.get_xticklabels(), visible=False)
         plt.setp(ax_rsi.get_xticklabels(), visible=False)
@@ -769,7 +777,7 @@ def _trendbreaker_locked(
             is_bull=is_bull,
         )
 
-        plt.subplots_adjust(left=0.04, right=0.92, top=0.90, bottom=0.06)
+        plt.subplots_adjust(left=0.05, right=0.90, top=0.91, bottom=0.08)
         return _save_chart(fig, symbol, f"trendbreaker_{event_type.lower()}")
 
     except Exception as e:
