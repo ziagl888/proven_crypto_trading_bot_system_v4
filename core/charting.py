@@ -402,11 +402,10 @@ def _pattern_locked(
                                width_ratios=[4, 1],
                                hspace=0.06, wspace=0.04)
         ax_main = fig.add_subplot(gs[0, 0])
-        ax_vol  = ax_main.twinx()
         ax_vbp  = fig.add_subplot(gs[0, 1])
         ax_vbar = fig.add_subplot(gs[1, 0])
 
-        _draw_volume(ax_main, ax_vol, df)
+        # Volume only in bottom panel — no twin axis in main chart
         _draw_candles(ax_main, df)
         _draw_price_line(ax_main, price)
         _draw_price_tag(ax_main, last_p)
