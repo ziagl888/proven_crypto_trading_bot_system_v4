@@ -332,23 +332,6 @@ def _check_price_moves(symbol: str, data: list, now: datetime.datetime,
         if ref_price <= 0:
             continue
 
-        # Continuity check: verify no gaps in the lookback window
-        # Get all buckets in the window and check for gaps > 30s
-        window_buckets = _find_bucket_range(data, now, seconds_back + 30)
-        if len(window_buckets) < 2:
-            continue
-        has_gap = False
-        for i in range(1, len(window_buckets)):
-            t_prev = _bucket_ts(window_buckets[i-1])
-            t_curr = _bucket_ts(window_buckets[i])
-            if t_prev and t_curr:
-                gap = (t_curr - t_prev).total_seconds()
-                if gap > 30:  # more than 3× normal poll interval
-                    has_gap = True
-                    break
-        if has_gap:
-            continue
-
         chg_pct = (current_price / ref_price - 1) * 100
         if abs(chg_pct) < min_pct:
             continue
