@@ -1,30 +1,27 @@
 # 20_telegram_bot.py
-# Telegram outbox consumer.
+# Telegram Outbox Consumer V4
 #
-# Polls telegram_outbox every 2s for unsent messages and sends them
-# via the Telegram Bot API. Marks rows as sent after successful delivery.
-#
-# Supports:
-#   - Text messages (plain or HTML)
-#   - Image + caption (image_path set)
-#   - Rate limiting (Telegram: 30 msg/s global, 1 msg/s per chat)
-#   - Retry on transient errors (up to 3 attempts with backoff)
-#
-# Architecture:
-#   Bots → INSERT INTO telegram_outbox
-#   This process → SELECT unsent → send → UPDATE sent=TRUE
+# Full feature parity with V3 4_telegram_bot.py:
+#   - Async (asyncio + python-telegram-bot)
+#   - Per-channel rate limiting (3.1s between sends to same channel)
+#   - Global rate limit (50ms = ~20 msg/s)
+#   - Smart FIFO: skips blocked channels, sends to free ones immediately
+#   - RetryAfter / Flood Control with exact backoff
+#   - Attempt counter (max 3, then permanently failed)
+#   - Chart dedup: only deletes image if no other unsent row needs it
+#   - Batch size 50
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import logging.handlers
 import os
+import re
 import sys
 import time
 
-import requests
 from dotenv import load_dotenv
-
 load_dotenv()
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -47,160 +44,244 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from telegram import Bot
+from telegram.error import TelegramError, RetryAfter
+
 from core.config import TELEGRAM_BOT_TOKEN
-from core.database import db_connection
+from core.database import get_db_connection
 from core.schema import verify_schema
 from core.shutdown import ShutdownHandler
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-
-POLL_INTERVAL    = 2       # seconds between DB polls
-BATCH_SIZE       = 10      # rows per poll (avoid burst)
-MAX_RETRIES      = 3       # attempts per message
-RETRY_BACKOFF    = [1, 3, 9]  # seconds between retries
-# Telegram rate limits: 30 msg/s globally, 1 msg/s per chat
-# We send at most 1 per chat per second by sleeping between messages
-INTER_MSG_SLEEP  = 0.05    # 50ms between sends = 20 msg/s max (safe margin)
-
-API_BASE = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+FETCH_BATCH_SIZE            = 50
+IDLE_SLEEP_S                = 2.0
+MAX_ATTEMPTS                = 3
+GLOBAL_MIN_INTERVAL_MS      = 50
+PER_CHANNEL_MIN_INTERVAL_MS = 3100
 
 
-# ── Telegram API helpers ───────────────────────────────────────────────────────
+def _ensure_schema(conn) -> None:
+    with conn.cursor() as cur:
+        for col_sql in [
+            "ALTER TABLE telegram_outbox ADD COLUMN IF NOT EXISTS attempts   INTEGER DEFAULT 0",
+            "ALTER TABLE telegram_outbox ADD COLUMN IF NOT EXISTS failed     BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE telegram_outbox ADD COLUMN IF NOT EXISTS last_error TEXT",
+        ]:
+            cur.execute(col_sql)
+    conn.commit()
 
-def _send_text(channel_id: int, message: str) -> bool:
-    """Sends a plain text message. Returns True on success."""
+
+def _fetch_batch() -> list[list]:
+    conn = get_db_connection()
     try:
-        resp = requests.post(
-            f"{API_BASE}/sendMessage",
-            json={
-                "chat_id":    channel_id,
-                "text":       message,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return True
-        data = resp.json()
-        logger.warning(
-            f"Telegram sendMessage failed [{resp.status_code}]: "
-            f"{data.get('description', resp.text[:100])}"
-        )
-        return False
-    except requests.RequestException as e:
-        logger.warning(f"Telegram sendMessage error: {e}")
-        return False
-
-
-def _send_photo(channel_id: int, image_path: str, caption: str) -> bool:
-    """Sends a photo with caption. Returns True on success."""
-    if not os.path.exists(image_path):
-        logger.warning(f"Image not found: {image_path} — sending as text.")
-        return _send_text(channel_id, caption)
-    try:
-        with open(image_path, "rb") as img:
-            resp = requests.post(
-                f"{API_BASE}/sendPhoto",
-                data={
-                    "chat_id":    channel_id,
-                    "caption":    caption,
-                    "parse_mode": "HTML",
-                },
-                files={"photo": img},
-                timeout=20,
-            )
-        if resp.status_code == 200:
-            return True
-        data = resp.json()
-        logger.warning(
-            f"Telegram sendPhoto failed [{resp.status_code}]: "
-            f"{data.get('description', resp.text[:100])}"
-        )
-        return False
-    except requests.RequestException as e:
-        logger.warning(f"Telegram sendPhoto error: {e}")
-        return False
-
-
-def _send_with_retry(channel_id: int, message: str, image_path: str | None) -> bool:
-    """Sends a message with up to MAX_RETRIES attempts."""
-    for attempt in range(MAX_RETRIES):
-        if image_path:
-            ok = _send_photo(channel_id, image_path, message)
-        else:
-            ok = _send_text(channel_id, message)
-
-        if ok:
-            return True
-
-        if attempt < MAX_RETRIES - 1:
-            wait = RETRY_BACKOFF[attempt]
-            logger.debug(f"Retry {attempt + 1}/{MAX_RETRIES} in {wait}s...")
-            time.sleep(wait)
-
-    return False
-
-
-# ── DB helpers ────────────────────────────────────────────────────────────────
-
-def _fetch_unsent(limit: int = BATCH_SIZE) -> list[dict]:
-    """Returns up to `limit` unsent rows ordered by id."""
-    with db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT id, channel_id, message, image_path
                 FROM   telegram_outbox
-                WHERE  sent = FALSE
-                ORDER  BY id
+                WHERE  sent   = FALSE
+                  AND  (failed = FALSE OR failed IS NULL)
+                ORDER  BY id ASC
                 LIMIT  %s
                 """,
-                (limit,),
+                (FETCH_BATCH_SIZE,),
             )
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
+            return [list(row) for row in cur.fetchall()]
+    finally:
+        conn.close()
 
 
-def _mark_sent(row_id: int) -> None:
-    with db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE telegram_outbox SET sent = TRUE WHERE id = %s",
-                (row_id,),
-            )
-        conn.commit()
+def _mark_sent(cur, msg_id: int, image_path) -> None:
+    cur.execute("UPDATE telegram_outbox SET sent = TRUE WHERE id = %s", (msg_id,))
+    _delete_chart_if_safe(cur, image_path, msg_id)
 
 
-def _mark_failed(row_id: int) -> None:
-    """
-    On permanent failure: mark as sent=TRUE to avoid infinite retry loops.
-    The message is lost but the queue keeps moving.
-    """
-    with db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE telegram_outbox
-                SET    sent = TRUE
-                WHERE  id   = %s
-                """,
-                (row_id,),
-            )
-        conn.commit()
-    logger.error(f"Message id={row_id} permanently failed — marked as sent.")
+def _mark_failure(cur, msg_id: int, error: str, image_path) -> bool:
+    cur.execute(
+        """
+        UPDATE telegram_outbox
+        SET    attempts   = COALESCE(attempts, 0) + 1,
+               last_error = %s,
+               failed     = CASE WHEN COALESCE(attempts, 0) + 1 >= %s THEN TRUE ELSE failed END
+        WHERE  id = %s
+        RETURNING failed
+        """,
+        (error[:1000], MAX_ATTEMPTS, msg_id),
+    )
+    row = cur.fetchone()
+    now_failed = bool(row and row[0])
+    if now_failed:
+        _delete_chart_if_safe(cur, image_path, msg_id)
+    return now_failed
 
 
-# ── Main loop ─────────────────────────────────────────────────────────────────
+def _delete_chart_if_safe(cur, image_path, current_id: int) -> None:
+    if not image_path:
+        return
+    try:
+        cur.execute(
+            "SELECT 1 FROM telegram_outbox WHERE image_path=%s AND sent=FALSE AND id!=%s LIMIT 1",
+            (image_path, current_id),
+        )
+        if cur.fetchone() is not None:
+            return
+        if os.path.isfile(image_path):
+            os.remove(image_path)
+    except Exception as e:
+        logger.debug(f"Chart delete error: {e}")
+
+
+async def process_outbox() -> None:
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    me  = await bot.get_me()
+    logger.info(f"Telegram bot connected: @{me.username}")
+
+    conn = get_db_connection()
+    try:
+        _ensure_schema(conn)
+    finally:
+        conn.close()
+
+    last_send_per_channel: dict[int, float] = {}
+    last_global_send_ms: float = 0.0
+    sent_total = failed_total = 0
+
+    logger.info(f"Polling telegram_outbox (batch={FETCH_BATCH_SIZE}, idle={IDLE_SLEEP_S}s)...")
+
+    while True:
+        try:
+            batch = _fetch_batch()
+        except Exception as e:
+            logger.error(f"DB fetch error: {e}")
+            await asyncio.sleep(IDLE_SLEEP_S)
+            continue
+
+        if not batch:
+            await asyncio.sleep(IDLE_SLEEP_S)
+            continue
+
+        batch_aborted = False
+
+        while batch and not batch_aborted:
+            now_ms = time.time() * 1000
+
+            sendable_idx     = None
+            earliest_unblock = None
+
+            for idx, (msg_id, channel_id, text, image_path) in enumerate(batch):
+                ch_ready  = last_send_per_channel.get(channel_id, 0.0) + PER_CHANNEL_MIN_INTERVAL_MS
+                glb_ready = last_global_send_ms + GLOBAL_MIN_INTERVAL_MS
+                ready_at  = max(ch_ready, glb_ready)
+                if ready_at <= now_ms:
+                    sendable_idx = idx
+                    break
+                if earliest_unblock is None or ready_at < earliest_unblock:
+                    earliest_unblock = ready_at
+
+            if sendable_idx is None:
+                wait_s = min(max(0.05, (earliest_unblock - now_ms) / 1000), 5.0)
+                await asyncio.sleep(wait_s)
+                continue
+
+            msg_id, channel_id, text, image_path = batch.pop(sendable_idx)
+
+            conn = get_db_connection()
+            try:
+                with conn.cursor() as cur:
+                    try:
+                        if image_path and os.path.isfile(image_path):
+                            with open(image_path, "rb") as photo:
+                                await bot.send_photo(
+                                    chat_id=channel_id,
+                                    photo=photo,
+                                    caption=text,
+                                    parse_mode="HTML",
+                                )
+                        else:
+                            if image_path and not os.path.isfile(image_path):
+                                logger.warning(f"Image not found: {image_path} — text only")
+                            await bot.send_message(
+                                chat_id=channel_id,
+                                text=text,
+                                parse_mode="HTML",
+                                disable_web_page_preview=True,
+                            )
+
+                        now_after = time.time() * 1000
+                        last_send_per_channel[channel_id] = now_after
+                        last_global_send_ms = now_after
+                        _mark_sent(cur, msg_id, image_path)
+                        conn.commit()
+                        sent_total += 1
+                        logger.info(
+                            f"Sent message id={msg_id} → channel={channel_id} "
+                            f"(total sent: {sent_total})"
+                        )
+
+                    except RetryAfter as e:
+                        wait_s = float(e.retry_after)
+                        logger.warning(f"Flood Control — waiting {wait_s:.0f}s (channel {channel_id})")
+                        batch.insert(sendable_idx, [msg_id, channel_id, text, image_path])
+                        last_send_per_channel[channel_id] = time.time() * 1000 + wait_s * 1000
+                        await asyncio.sleep(wait_s + 1)
+                        batch_aborted = True
+
+                    except TelegramError as e:
+                        err = str(e)
+                        m   = re.search(r"Retry in (\d+)", err)
+                        if m:
+                            wait_s = int(m.group(1))
+                            logger.warning(f"Flood Control (text) — waiting {wait_s}s")
+                            batch.insert(sendable_idx, [msg_id, channel_id, text, image_path])
+                            last_send_per_channel[channel_id] = time.time() * 1000 + wait_s * 1000
+                            await asyncio.sleep(wait_s + 1)
+                            batch_aborted = True
+                            continue
+
+                        if "chat not found" in err.lower():
+                            logger.error(f"Chat {channel_id} not found — msg {msg_id} failed permanently")
+                            cur.execute(
+                                "UPDATE telegram_outbox SET failed=TRUE, last_error=%s WHERE id=%s",
+                                (err[:1000], msg_id),
+                            )
+                            _delete_chart_if_safe(cur, image_path, msg_id)
+                            conn.commit()
+                            failed_total += 1
+                            continue
+
+                        now_failed = _mark_failure(cur, msg_id, err, image_path)
+                        conn.commit()
+                        if now_failed:
+                            logger.error(f"Message id={msg_id} permanently failed after {MAX_ATTEMPTS} attempts: {err}")
+                            failed_total += 1
+                        else:
+                            logger.warning(f"Message id={msg_id} error (will retry): {err}")
+
+                    except Exception as e:
+                        err = str(e)
+                        now_failed = _mark_failure(cur, msg_id, err, image_path)
+                        conn.commit()
+                        if now_failed:
+                            logger.error(f"Message id={msg_id} permanently failed: {err}")
+                            failed_total += 1
+                        else:
+                            logger.warning(f"Message id={msg_id} error (will retry): {err}")
+
+            except Exception as outer:
+                logger.error(f"Outer send error msg {msg_id}: {outer}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            finally:
+                conn.close()
+
+        await asyncio.sleep(0.1)
+
 
 def main() -> None:
     logger.info("=" * 60)
     logger.info("Telegram Bot V4 — starting")
     logger.info("=" * 60)
-
-    logger.info("Creating DB connection pool (min=2, max=20) → "
-                f"{os.getenv('DB_HOST','localhost')}:{os.getenv('DB_PORT',5432)}/"
-                f"{os.getenv('DB_NAME','cryptodata')}")
 
     schema = verify_schema()
     if schema["missing"]:
@@ -208,74 +289,11 @@ def main() -> None:
         sys.exit(1)
     logger.info(f"Schema OK — {len(schema['ok'])} tables verified.")
 
-    # Verify bot token works
     try:
-        resp = requests.get(f"{API_BASE}/getMe", timeout=5)
-        if resp.status_code == 200:
-            bot_name = resp.json()["result"]["username"]
-            logger.info(f"Telegram bot connected: @{bot_name}")
-        else:
-            logger.error(f"Telegram getMe failed: {resp.text[:100]}")
-            sys.exit(1)
-    except requests.RequestException as e:
-        logger.error(f"Telegram connection failed: {e}")
-        sys.exit(1)
-
-    shutdown = ShutdownHandler("TELEGRAM")
-    sent_total = 0
-    failed_total = 0
-
-    logger.info(f"Polling telegram_outbox every {POLL_INTERVAL}s...")
-
-    while not shutdown.is_set():
-        try:
-            rows = _fetch_unsent()
-        except Exception as e:
-            logger.error(f"DB poll error: {e}")
-            shutdown.sleep(POLL_INTERVAL)
-            continue
-
-        for row in rows:
-            if shutdown.is_set():
-                break
-
-            ok = _send_with_retry(
-                channel_id=row["channel_id"],
-                message=row["message"],
-                image_path=row["image_path"],
-            )
-
-            if ok:
-                _mark_sent(row["id"])
-                sent_total += 1
-                logger.info(
-                    f"Sent message id={row['id']} → "
-                    f"channel={row['channel_id']} "
-                    f"(total sent: {sent_total})"
-                )
-                # Clean up chart file after successful send
-                if row["image_path"] and os.path.exists(row["image_path"]):
-                    try:
-                        os.remove(row["image_path"])
-                        logger.debug(f"Deleted chart: {row['image_path']}")
-                    except Exception as e:
-                        logger.debug(f"Could not delete chart: {e}")
-            else:
-                _mark_failed(row["id"])
-                failed_total += 1
-
-            time.sleep(INTER_MSG_SLEEP)
-
-        shutdown.sleep(POLL_INTERVAL)
-
-    logger.info(
-        f"Telegram Bot stopped — {sent_total} sent, {failed_total} failed."
-    )
-
-
-if __name__ == "__main__":
-    try:
-        main()
+        asyncio.run(process_outbox())
     except KeyboardInterrupt:
         logger.info("Telegram Bot stopped (Ctrl+C).")
 
+
+if __name__ == "__main__":
+    main()
