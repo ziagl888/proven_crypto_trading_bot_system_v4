@@ -217,9 +217,11 @@ def _draw_price_line(ax, price: pd.Series) -> None:
 
 def _draw_price_tag(ax, price: float) -> None:
     ax.axhline(price, color="white", linewidth=0.8, linestyle="--", alpha=0.35, zorder=3)
-    ax.text(0.01, price, f"  {price:,.5g}",
+    # Place label on left y-axis side — avoids right-side clipping
+    ax.text(-0.01, price, f"{price:,.5g}  ",
             transform=ax.get_yaxis_transform(),
-            color="white", fontsize=9, fontweight="bold", va="center", zorder=5,
+            color="white", fontsize=9, fontweight="bold",
+            va="center", ha="right", zorder=5,
             bbox=dict(facecolor=PANEL_BG, edgecolor="#2a3c60",
                       boxstyle="round,pad=0.3", alpha=0.90))
 
@@ -314,7 +316,10 @@ def _mini_locked(symbol, minutes, spike_start, spike_end, tick_data) -> str | No
         _style_ax(ax_price)
         ax_price.xaxis.set_major_formatter(_DateFormatter("%H:%M"))
         ax_price.xaxis.set_major_locator(mticker.MaxNLocator(nbins=8, integer=True))
-        ax_price.set_xlim(df.index[0], df.index[-1])
+        # Add 3% right padding so last candle + price line are fully visible
+        time_range = df.index[-1] - df.index[0]
+        right_pad  = time_range * 0.03
+        ax_price.set_xlim(df.index[0], df.index[-1] + right_pad)
         p_range = float(price.max() - price.min())
         ax_price.set_ylim(float(price.min()) - p_range*0.03, float(price.max()) + p_range*0.06)
 
@@ -332,7 +337,7 @@ def _mini_locked(symbol, minutes, spike_start, spike_end, tick_data) -> str | No
                     f"{pd.Timestamp.now('UTC').strftime('%Y-%m-%d %H:%M')} UTC",
                     is_bull=is_up)
 
-        plt.subplots_adjust(left=0.05, right=0.92, top=0.90, bottom=0.08)
+        plt.subplots_adjust(left=0.06, right=0.88, top=0.90, bottom=0.08)
         return _save_chart(fig, symbol, "chart")
 
     except Exception as e:
