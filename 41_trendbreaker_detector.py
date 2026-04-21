@@ -203,6 +203,9 @@ def _already_active(conn, symbol: str, event_type: str) -> bool:
     )
     try:
         with conn.cursor() as cur:
+            # Use interval multiplication instead of INTERVAL '%s hours'
+            # because psycopg2 cannot substitute inside INTERVAL literals.
+            # NOW() - INTERVAL '1 hour' * N works correctly.
             cur.execute(
                 """
                 SELECT 1 FROM trendline_events
@@ -211,7 +214,7 @@ def _already_active(conn, symbol: str, event_type: str) -> bool:
                     state IN ('DETECTED','WAITING_RETEST')
                     OR (
                       state IN ('CONFIRMED','EXPIRED')
-                      AND updated_at >= NOW() - INTERVAL '%s hours'
+                      AND updated_at >= NOW() - INTERVAL '1 hour' * %s
                     )
                   )
                 LIMIT 1
@@ -219,7 +222,8 @@ def _already_active(conn, symbol: str, event_type: str) -> bool:
                 (symbol, event_type, cooldown_h),
             )
             return cur.fetchone() is not None
-    except Exception:
+    except Exception as e:
+        logger.debug(f"_already_active error: {e}")
         return False
 
 
@@ -512,5 +516,6 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Trendbreaker Detector stopped (Ctrl+C).")
+
 
 
