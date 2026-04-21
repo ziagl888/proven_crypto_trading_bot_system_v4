@@ -219,10 +219,10 @@ async def job_main_reports() -> None:
                     # Price change over completed periods ending at hour_start
                     changes = {}
                     for hours, col in [(1,"1h"),(4,"4h"),(24,"24h"),(168,"7d"),(720,"30d")]:
+                        # Get price at START of window (oldest candle in window)
                         cur.execute(
-                            f"""
-                            SELECT AVG(close)
-                            FROM ohlcv_30m
+                            """
+                            SELECT close FROM ohlcv_30m
                             WHERE symbol = ANY(%s::text[])
                               AND open_time >= %s
                               AND open_time < %s
@@ -231,8 +231,13 @@ async def job_main_reports() -> None:
                             (sym_list, hour_start - timedelta(hours=hours), hour_start),
                         )
                         row = cur.fetchone()
+                        # Get current price (latest candle)
                         cur.execute(
-                            "SELECT AVG(close) FROM ohlcv_30m WHERE symbol = ANY(%s::text[]) ORDER BY open_time DESC LIMIT 1",
+                            """
+                            SELECT close FROM ohlcv_30m
+                            WHERE symbol = ANY(%s::text[])
+                            ORDER BY open_time DESC LIMIT 1
+                            """,
                             (sym_list,),
                         )
                         curr = cur.fetchone()
@@ -506,7 +511,7 @@ async def job_signal_summary() -> None:
                 SELECT
                     bot_name        AS strategy,
                     direction,
-                    entry_price     AS entry,
+                    entry           AS entry,
                     close_price,
                     opened_at       AS created_at,
                     closed_at,
@@ -610,7 +615,7 @@ async def job_per_bot_performance() -> None:
                 SELECT
                     bot_name        AS strategy,
                     direction,
-                    entry_price     AS entry,
+                    entry           AS entry,
                     close_price,
                     opened_at       AS created_at,
                     closed_at,
@@ -618,7 +623,7 @@ async def job_per_bot_performance() -> None:
                     close_reason,
                     tp_hit
                 FROM trades
-                WHERE entry_price IS NOT NULL
+                WHERE entry IS NOT NULL
                 """,
                 conn,
             )
